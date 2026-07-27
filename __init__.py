@@ -77,7 +77,7 @@ def get_lyrics(*args):
     album = getattr(track, "album", None)
     metadata = file.metadata
 
-    add_unsynced = config.setting[ADD_UNSYNCED_LYRICS]
+    add_unsynced = api.plugin_config[ADD_UNSYNCED_LYRICS]
     add_synced = config.setting[ADD_SYNCED_LYRICS]
     if add_unsynced is None:
         add_unsynced = True
@@ -205,51 +205,45 @@ class LrclibLyricsOptions(OptionsPage):
     TITLE = "Lrclib Lyrics"
     PARENT = "plugins"
 
-    # By default, use a path for the LRC file in the same folder as
-    # the music file so as not to store the LRC files "somewhere"
     __default_naming = f"%folderpath%{os.sep}%filename%.lrc"
 
-
-    def __init__(self, parent=None, api=None):
-        super(LrclibLyricsOptions, self).__init__(parent)
-        self.api = api
+    def __init__(self, parent=None):
         super(LrclibLyricsOptions, self).__init__(parent)
         self.ui = Ui_OptionLrclibLyrics()
         self.ui.setupUi(self)
 
     def load(self):
-        self.ui.lyrics.setChecked(config.setting[ADD_UNSYNCED_LYRICS])
-        self.ui.syncedlyrics.setChecked(config.setting[ADD_SYNCED_LYRICS])
-        self.ui.replace_embedded.setChecked(config.setting[NEVER_REPLACE_LYRICS])
-        self.ui.lrc_name.setText(config.setting[LRC_FILENAME])
-        self.ui.lrc_as_sidecar.setChecked(config.setting[LRC_AS_SIDECAR])
-        self.ui.export_lyrics.setChecked(config.setting[EXPORT_LRC])
-        self.ui.replace_exported.setChecked(config.setting[NEVER_REPLACE_LRC])
+        self.ui.lyrics.setChecked(self.api.plugin_config[ADD_UNSYNCED_LYRICS])
+        self.ui.syncedlyrics.setChecked(self.api.plugin_config[ADD_SYNCED_LYRICS])
+        self.ui.replace_embedded.setChecked(self.api.plugin_config[NEVER_REPLACE_LYRICS])
+        self.ui.lrc_name.setText(self.api.plugin_config[LRC_FILENAME])
+        self.ui.lrc_as_sidecar.setChecked(self.api.plugin_config[LRC_AS_SIDECAR])
+        self.ui.export_lyrics.setChecked(self.api.plugin_config[EXPORT_LRC])
+        self.ui.replace_exported.setChecked(self.api.plugin_config[NEVER_REPLACE_LRC])
 
-        # Initialize the LRC filename field state
         self.update_lrc_name_field_state()
-        # Connect the sidecar checkbox to update the filename field state
         self.ui.lrc_as_sidecar.toggled.connect(self.update_lrc_name_field_state)
 
     def save(self):
-        config.setting[ADD_UNSYNCED_LYRICS] = self.ui.lyrics.isChecked()
-        config.setting[ADD_SYNCED_LYRICS] = self.ui.syncedlyrics.isChecked()
-        config.setting[NEVER_REPLACE_LYRICS] = self.ui.replace_embedded.isChecked()
-        config.setting[LRC_FILENAME] = self.ui.lrc_name.text()
-        config.setting[LRC_AS_SIDECAR] = self.ui.lrc_as_sidecar.isChecked()
-        config.setting[EXPORT_LRC] = self.ui.export_lyrics.isChecked()
-        config.setting[NEVER_REPLACE_LRC] = self.ui.replace_exported.isChecked()
-
-    def update_lrc_name_field_state(self):
-        """Enable or disable the LRC filename field based on the sidecar option."""
-        self.ui.lrc_name.setEnabled(not self.ui.lrc_as_sidecar.isChecked())
-
-
-ratecontrol.set_minimum_delay_for_url(URL, REQUESTS_DELAY)
+        self.api.plugin_config[ADD_UNSYNCED_LYRICS] = self.ui.lyrics.isChecked()
+        self.api.plugin_config[ADD_SYNCED_LYRICS] = self.ui.syncedlyrics.isChecked()
+        self.api.plugin_config[NEVER_REPLACE_LYRICS] = self.ui.replace_embedded.isChecked()
+        self.api.plugin_config[LRC_FILENAME] = self.ui.lrc_name.text()
+        self.api.plugin_config[LRC_AS_SIDECAR] = self.ui.lrc_as_sidecar.isChecked()
+        self.api.plugin_config[EXPORT_LRC] = self.ui.export_lyrics.isChecked()
+        self.api.plugin_config[NEVER_REPLACE_LRC] = self.ui.replace_exported.isChecked()
 
 
 def enable(api: PluginApi):
     """Called when plugin is enabled."""
+    api.plugin_config.register_option(ADD_UNSYNCED_LYRICS, True)
+    api.plugin_config.register_option(ADD_SYNCED_LYRICS, False)
+    api.plugin_config.register_option(NEVER_REPLACE_LYRICS, False)
+    api.plugin_config.register_option(LRC_FILENAME, f"%folderpath%{os.sep}%filename%.lrc")
+    api.plugin_config.register_option(LRC_AS_SIDECAR, True)
+    api.plugin_config.register_option(EXPORT_LRC, True)
+    api.plugin_config.register_option(NEVER_REPLACE_LRC, False)
+
     api.register_file_post_addition_to_track_processor(get_lyrics)
     api.register_file_post_save_processor(export_lrc_file)
     api.register_track_action(ImportLrc)
