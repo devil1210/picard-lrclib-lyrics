@@ -1,0 +1,11 @@
+uuid = "8a9b0c1d-2e3f-4a5b-6c7d-8e9f0a1b2c3d"
+name = "Lrclib Lyrics"
+version = "1.0.0"
+authors = ['MusicBrainz Contributors']
+description = "Fetches synced and unsynced lyrics from LRCLIB."
+categories = ['metadata', 'ui']
+homepage = "https://github.com/musicbrainz/picard-plugins/tree/2.0/plugins/lrclib_lyrics"
+report_bugs_to = "https://github.com/musicbrainz/picard-plugins/tree/2.0/plugins/lrclib_lyrics"
+api = ["3.0"]
+license = "GPL-2.0-or-later"
+license_url = "https://www.gnu.org/licenses/gpl-2.0.html"
