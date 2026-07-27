@@ -1,3 +1,24 @@
+
+_api = None
+
+def _get_option(key, default=None):
+    global _api
+    if _api and hasattr(_api, "plugin_config"):
+        try:
+            val = __get_option(key)
+            if val is not None:
+                return val
+        except Exception:
+            pass
+    if hasattr(config, "setting"):
+        try:
+            val = config.setting[key]
+            if val is not None:
+                return val
+        except Exception:
+            pass
+    return default
+
 _api = None
 from picard.config import config
 from picard import log
@@ -78,8 +99,8 @@ def get_lyrics(*args):
     album = getattr(track, "album", None)
     metadata = file.metadata
 
-    add_unsynced = _api.plugin_config[ADD_UNSYNCED_LYRICS]
-    add_synced = config.setting[ADD_SYNCED_LYRICS]
+    add_unsynced = _get_option(ADD_UNSYNCED_LYRICS, True)
+    add_synced = _get_option(ADD_SYNCED_LYRICS, False)
     if add_unsynced is None:
         add_unsynced = True
     if not (add_unsynced or add_synced):
@@ -93,7 +114,7 @@ def get_lyrics(*args):
         log.debug("Skipping fetching lyrics for track in %s as both title and artist are required", album)
         return
 
-    never_replace = config.setting[NEVER_REPLACE_LYRICS]
+    never_replace = _get_option(NEVER_REPLACE_LYRICS, False)
     if never_replace and metadata.get("lyrics"):
         log.debug("Skipping fetching lyrics for %s as lyrics are already embedded", title)
         return
