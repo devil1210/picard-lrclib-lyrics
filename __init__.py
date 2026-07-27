@@ -1,3 +1,4 @@
+_api = None
 from picard.config import config
 from picard import log
 # -*- coding: utf-8 -*-
@@ -77,7 +78,7 @@ def get_lyrics(*args):
     album = getattr(track, "album", None)
     metadata = file.metadata
 
-    add_unsynced = api.plugin_config[ADD_UNSYNCED_LYRICS]
+    add_unsynced = _api.plugin_config[ADD_UNSYNCED_LYRICS]
     add_synced = config.setting[ADD_SYNCED_LYRICS]
     if add_unsynced is None:
         add_unsynced = True
@@ -235,6 +236,8 @@ class LrclibLyricsOptions(OptionsPage):
 
 
 def enable(api: PluginApi):
+    global _api
+    _api = api
     """Called when plugin is enabled."""
     api.plugin_config.register_option(ADD_UNSYNCED_LYRICS, True)
     api.plugin_config.register_option(ADD_SYNCED_LYRICS, False)
