@@ -225,11 +225,12 @@ class LrclibLyricsOptions(OptionsPage):
         super().__init__(parent)
         from PyQt6 import QtWidgets
 
-        self.cb_unsynced = QtWidgets.QCheckBox("Agregar letras no sincronizadas", self)
-        self.cb_synced = QtWidgets.QCheckBox("Agregar letras sincronizadas", self)
-        self.cb_never_replace = QtWidgets.QCheckBox("Nunca reemplazar letras existentes", self)
-        self.cb_export_lrc = QtWidgets.QCheckBox("Exportar archivo .lrc al guardar", self)
-        self.cb_sidecar = QtWidgets.QCheckBox("Exportar como sidecar (.lrc junto al archivo)", self)
+        self.cb_unsynced = QtWidgets.QCheckBox("Download and embed unsynced lyrics", self)
+        self.cb_synced = QtWidgets.QCheckBox("Download and embed synced lyrics", self)
+        self.cb_never_replace = QtWidgets.QCheckBox("Never replace any embedded lyrics if already present", self)
+        self.cb_export_lrc = QtWidgets.QCheckBox("Export lyrics to lrc file when saving (priority to synced lyrics)", self)
+        self.cb_sidecar = QtWidgets.QCheckBox("Save the LRC file as a sidecar file to the audio file", self)
+        self.cb_never_replace_lrc = QtWidgets.QCheckBox("Never replace lrc files if already present", self)
 
         vbox = QtWidgets.QVBoxLayout(self)
         vbox.addWidget(self.cb_unsynced)
@@ -237,36 +238,24 @@ class LrclibLyricsOptions(OptionsPage):
         vbox.addWidget(self.cb_never_replace)
         vbox.addWidget(self.cb_export_lrc)
         vbox.addWidget(self.cb_sidecar)
+        vbox.addWidget(self.cb_never_replace_lrc)
         vbox.addStretch()
 
     def load(self):
-        self.cb_unsynced.setChecked(_get_option(ADD_UNSYNCED_LYRICS, True))
-        self.cb_synced.setChecked(_get_option(ADD_SYNCED_LYRICS, True))
-        self.cb_never_replace.setChecked(_get_option(NEVER_REPLACE_LYRICS, False))
-        self.cb_export_lrc.setChecked(_get_option(EXPORT_LRC, True))
-        self.cb_sidecar.setChecked(_get_option(LRC_AS_SIDECAR, True))
+        self.cb_unsynced.setChecked(bool(self.api.plugin_config[ADD_UNSYNCED_LYRICS]))
+        self.cb_synced.setChecked(bool(self.api.plugin_config[ADD_SYNCED_LYRICS]))
+        self.cb_never_replace.setChecked(bool(self.api.plugin_config[NEVER_REPLACE_LYRICS]))
+        self.cb_export_lrc.setChecked(bool(self.api.plugin_config[EXPORT_LRC]))
+        self.cb_sidecar.setChecked(bool(self.api.plugin_config[LRC_AS_SIDECAR]))
+        self.cb_never_replace_lrc.setChecked(bool(self.api.plugin_config[NEVER_REPLACE_LRC]))
 
     def save(self):
-        cfg_map = {
-            ADD_UNSYNCED_LYRICS: self.cb_unsynced.isChecked(),
-            ADD_SYNCED_LYRICS: self.cb_synced.isChecked(),
-            NEVER_REPLACE_LYRICS: self.cb_never_replace.isChecked(),
-            EXPORT_LRC: self.cb_export_lrc.isChecked(),
-            LRC_AS_SIDECAR: self.cb_sidecar.isChecked(),
-        }
-        if _api and hasattr(_api, 'plugin_config'):
-            for k, v in cfg_map.items():
-                try:
-                    _api.plugin_config[k] = v
-                except Exception:
-                    pass
-
-        if hasattr(config, 'setting'):
-            for k, v in cfg_map.items():
-                try:
-                    config.setting[k] = v
-                except Exception:
-                    pass
+        self.api.plugin_config[ADD_UNSYNCED_LYRICS] = self.cb_unsynced.isChecked()
+        self.api.plugin_config[ADD_SYNCED_LYRICS] = self.cb_synced.isChecked()
+        self.api.plugin_config[NEVER_REPLACE_LYRICS] = self.cb_never_replace.isChecked()
+        self.api.plugin_config[EXPORT_LRC] = self.cb_export_lrc.isChecked()
+        self.api.plugin_config[LRC_AS_SIDECAR] = self.cb_sidecar.isChecked()
+        self.api.plugin_config[NEVER_REPLACE_LRC] = self.cb_never_replace_lrc.isChecked()
 
 
 def enable(api: PluginApi):
