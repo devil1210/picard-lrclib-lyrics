@@ -172,11 +172,11 @@ def response_handler(metadata, cache_key, document, reply, error):
 
 
 def get_lrc_file_name(file):
-    lrc_fmt = _get_option(LRC_FILENAME, "%filename%")
-    filename = f"{tags_pattern.sub('{}', lrc_fmt)}"
-    if _get_option(LRC_AS_SIDECAR, False):
+    if _get_option(LRC_AS_SIDECAR, True):
         filename = f"{os.path.splitext(file.filename)[0]}.lrc"
         return filename
+    lrc_fmt = _get_option(LRC_FILENAME, "%filename%")
+    filename = f"{tags_pattern.sub('{}', lrc_fmt)}"
     tags = tags_pattern.findall(lrc_fmt)
     values = []
     for tag in tags:
@@ -191,7 +191,7 @@ def export_lrc_file(*args):
     if not args:
         return
     file = args[-1]
-    if _get_option(EXPORT_LRC, False):
+    if _get_option(EXPORT_LRC, True):
         if not file or not hasattr(file, "metadata"):
             return
         metadata = file.metadata
@@ -223,49 +223,41 @@ class LrclibLyricsOptions(OptionsPage):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.ui = Ui_OptionLrclibLyrics()
-        self.ui.setupUi(self)
-        if hasattr(self.ui, 'syncedlyrics'):
-            self.ui.syncedlyrics.setEnabled(True)
-            self.ui.syncedlyrics.setCheckable(True)
+        from PyQt6 import QtWidgets
+
+        self.cb_unsynced = QtWidgets.QCheckBox("Agregar letras no sincronizadas", self)
+        self.cb_synced = QtWidgets.QCheckBox("Agregar letras sincronizadas", self)
+        self.cb_never_replace = QtWidgets.QCheckBox("Nunca reemplazar letras existentes", self)
+        self.cb_export_lrc = QtWidgets.QCheckBox("Exportar archivo .lrc al guardar", self)
+        self.cb_sidecar = QtWidgets.QCheckBox("Exportar como sidecar (.lrc junto al archivo)", self)
+
+        vbox = QtWidgets.QVBoxLayout(self)
+        vbox.addWidget(self.cb_unsynced)
+        vbox.addWidget(self.cb_synced)
+        vbox.addWidget(self.cb_never_replace)
+        vbox.addWidget(self.cb_export_lrc)
+        vbox.addWidget(self.cb_sidecar)
+        vbox.addStretch()
 
     def load(self):
-        if hasattr(self.ui, 'lyrics'):
-            self.ui.lyrics.setChecked(bool(_get_option(ADD_UNSYNCED_LYRICS, True)))
-        if hasattr(self.ui, 'syncedlyrics'):
-            self.ui.syncedlyrics.setChecked(bool(_get_option(ADD_SYNCED_LYRICS, False)))
-        if hasattr(self.ui, 'replace_embedded'):
-            self.ui.replace_embedded.setChecked(bool(_get_option(NEVER_REPLACE_LYRICS, False)))
-        if hasattr(self.ui, 'export_lyrics'):
-            self.ui.export_lyrics.setChecked(bool(_get_option(EXPORT_LRC, False)))
-        if hasattr(self.ui, 'lrc_as_sidecar'):
-            self.ui.lrc_as_sidecar.setChecked(bool(_get_option(LRC_AS_SIDECAR, False)))
-        if hasattr(self.ui, 'lrc_name'):
-            self.ui.lrc_name.setText(str(_get_option(LRC_FILENAME, "%filename%")))
-        if hasattr(self.ui, 'replace_exported'):
-            self.ui.replace_exported.setChecked(bool(_get_option(NEVER_REPLACE_LRC, False)))
+        self.cb_unsynced.setChecked(_get_option(ADD_UNSYNCED_LYRICS, True))
+        self.cb_synced.setChecked(_get_option(ADD_SYNCED_LYRICS, True))
+        self.cb_never_replace.setChecked(_get_option(NEVER_REPLACE_LYRICS, False))
+        self.cb_export_lrc.setChecked(_get_option(EXPORT_LRC, True))
+        self.cb_sidecar.setChecked(_get_option(LRC_AS_SIDECAR, True))
 
     def save(self):
-        cfg_map = {}
-        if hasattr(self.ui, 'lyrics'):
-            cfg_map[ADD_UNSYNCED_LYRICS] = self.ui.lyrics.isChecked()
-        if hasattr(self.ui, 'syncedlyrics'):
-            cfg_map[ADD_SYNCED_LYRICS] = self.ui.syncedlyrics.isChecked()
-        if hasattr(self.ui, 'replace_embedded'):
-            cfg_map[NEVER_REPLACE_LYRICS] = self.ui.replace_embedded.isChecked()
-        if hasattr(self.ui, 'export_lyrics'):
-            cfg_map[EXPORT_LRC] = self.ui.export_lyrics.isChecked()
-        if hasattr(self.ui, 'lrc_as_sidecar'):
-            cfg_map[LRC_AS_SIDECAR] = self.ui.lrc_as_sidecar.isChecked()
-        if hasattr(self.ui, 'lrc_name'):
-            cfg_map[LRC_FILENAME] = str(self.ui.lrc_name.text())
-        if hasattr(self.ui, 'replace_exported'):
-            cfg_map[NEVER_REPLACE_LRC] = self.ui.replace_exported.isChecked()
-
-        if hasattr(self, 'api') and self.api and hasattr(self.api, 'plugin_config'):
+        cfg_map = {
+            ADD_UNSYNCED_LYRICS: self.cb_unsynced.isChecked(),
+            ADD_SYNCED_LYRICS: self.cb_synced.isChecked(),
+            NEVER_REPLACE_LYRICS: self.cb_never_replace.isChecked(),
+            EXPORT_LRC: self.cb_export_lrc.isChecked(),
+            LRC_AS_SIDECAR: self.cb_sidecar.isChecked(),
+        }
+        if _api and hasattr(_api, 'plugin_config'):
             for k, v in cfg_map.items():
                 try:
-                    self.api.plugin_config[k] = v
+                    _api.plugin_config[k] = v
                 except Exception:
                     pass
 
@@ -283,10 +275,10 @@ def enable(api: PluginApi):
     if hasattr(api, "plugin_config") and hasattr(api.plugin_config, "register_option"):
         try:
             api.plugin_config.register_option(ADD_UNSYNCED_LYRICS, True)
-            api.plugin_config.register_option(ADD_SYNCED_LYRICS, False)
+            api.plugin_config.register_option(ADD_SYNCED_LYRICS, True)
             api.plugin_config.register_option(NEVER_REPLACE_LYRICS, False)
-            api.plugin_config.register_option(EXPORT_LRC, False)
-            api.plugin_config.register_option(LRC_AS_SIDECAR, False)
+            api.plugin_config.register_option(EXPORT_LRC, True)
+            api.plugin_config.register_option(LRC_AS_SIDECAR, True)
             api.plugin_config.register_option(LRC_FILENAME, "%filename%")
             api.plugin_config.register_option(NEVER_REPLACE_LRC, False)
         except Exception:
