@@ -87,8 +87,7 @@ def _do_fetch_lyrics(album, metadata, clean_title, raw_artist, cache_key):
             parse_response_type='json',
             url=URL,
             unencoded_queryargs=req_args,
-            important=False,
-            dont_log_status=(404,)
+            important=False
         )
     except Exception as e:
         log.error("Lrclib Lyrics error: %s", e)
