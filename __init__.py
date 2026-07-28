@@ -100,18 +100,24 @@ def _clean_artist_for_query(artist: str) -> str:
 
 
 def response_handler(album, metadata, clean_title, clean_artist, cache_key, document, reply, error):
-    # Whether the track's own metadata is in CJK (Korean/Japanese/Chinese)
-    track_is_cjk = _contains_cjk(clean_title) or _contains_cjk(clean_artist)
+    # Whether the track title itself uses CJK characters (e.g. actual Japanese
+    # or Korean title).  Romaji titles like "Gurenge" / "Renai Circulation"
+    # will be False even though the song is Japanese.
+    title_is_cjk = _contains_cjk(clean_title)
 
     if document and not error and isinstance(document, dict):
         unsynced_lyrics = document.get("plainLyrics")
         synced_lyrics = document.get("syncedLyrics")
         chosen = synced_lyrics or unsynced_lyrics
         if chosen:
-            # Skip CJK lyrics for non-CJK tracks: fall through to search fallback
-            if not track_is_cjk and _contains_cjk(chosen):
+            # If title is Latin-script AND the returned lyrics are CJK, skip
+            # and fall through to search so we can find a Latin/romaji version.
+            # (A Spanish song should not get Korean lyrics; a Japanese song
+            # written in romaji WILL still get Japanese lyrics if no romaji
+            # version exists — see two-pass logic in search_handler below.)
+            if not title_is_cjk and _contains_cjk(chosen):
                 log.debug(
-                    "Lrclib Lyrics: /api/get returned CJK lyrics for non-CJK track %r, trying search",
+                    "Lrclib Lyrics: /api/get returned CJK lyrics for Latin-title track %r, trying search",
                     cache_key,
                 )
             else:
@@ -120,31 +126,48 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                     metadata["lyrics"] = chosen
                 return
 
-    # Fallback to /api/search if /api/get didn't find lyrics directly
+    # Fallback to /api/search
     search_url = "https://lrclib.net/api/search"
     search_query = f"{clean_title} {clean_artist}".strip()
 
-
     def search_handler(doc, rep, err):
         if doc and not err and isinstance(doc, list):
+            # Two-pass selection:
+            #  Pass 1 – prefer lyrics whose script matches the title script.
+            #    • Latin title  → prefer non-CJK lyrics first.
+            #    • CJK title    → prefer CJK lyrics first.
+            #  Pass 2 – accept anything that has lyrics.
+            #
+            # This correctly handles:
+            #   ✓ "Un regalo mágico" (Spanish) → skips Korean translation, picks Spanish.
+            #   ✓ "Renai Circulation" (romaji) → no Latin lyrics exist, accepts Japanese.
+            #   ✓ "紅蓮華" (kanji title)        → CJK lyrics accepted directly.
+
+            candidates = []
             for item in doc:
-                if isinstance(item, dict):
-                    unsynced = item.get("plainLyrics")
-                    synced = item.get("syncedLyrics")
-                    chosen = synced or unsynced
-                    if chosen:
-                        # Skip CJK results for non-CJK tracks (e.g. Korean
-                        # translations returned before the Spanish original).
-                        if not track_is_cjk and _contains_cjk(chosen):
-                            log.debug(
-                                "Lrclib Lyrics: Skipping CJK lyrics for non-CJK track %r",
-                                cache_key,
-                            )
-                            continue
-                        lyrics_cache[cache_key] = chosen
+                if not isinstance(item, dict):
+                    continue
+                lyrics = item.get("syncedLyrics") or item.get("plainLyrics")
+                if lyrics:
+                    candidates.append(lyrics)
+
+            if candidates:
+                # Pass 1: prefer matching script
+                for lyrics in candidates:
+                    lyrics_is_cjk = _contains_cjk(lyrics)
+                    if title_is_cjk == lyrics_is_cjk:
+                        lyrics_cache[cache_key] = lyrics
                         if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                            metadata["lyrics"] = chosen
+                            metadata["lyrics"] = lyrics
                         return
+
+                # Pass 2: accept best available regardless of script
+                lyrics = candidates[0]
+                lyrics_cache[cache_key] = lyrics
+                if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                    metadata["lyrics"] = lyrics
+                return
+
         failed_lyrics_cache.add(cache_key)
         log.debug("Lrclib Lyrics: Could not fetch lyrics for %r", cache_key)
 
