@@ -210,22 +210,6 @@ def _clean_str(val):
     return str(val) if val is not None else ""
 
 
-def response_handler(metadata, cache_key, document, reply, error):
-    if document and not error:
-        unsynced_lyrics = document.get("plainLyrics")
-        synced_lyrics = document.get("syncedLyrics")
-        chosen = synced_lyrics or unsynced_lyrics
-        if chosen:
-            lyrics_cache[cache_key] = chosen
-            if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                metadata["lyrics"] = chosen
-        else:
-            failed_lyrics_cache.add(cache_key)
-    else:
-        failed_lyrics_cache.add(cache_key)
-        log.debug(f"Lrclib Lyrics: Could not fetch lyrics for {cache_key}")
-
-
 def get_lrc_file_name(file):
     if _get_option(LRC_AS_SIDECAR, True):
         filename = f"{os.path.splitext(file.filename)[0]}.lrc"
