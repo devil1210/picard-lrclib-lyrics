@@ -73,14 +73,69 @@ def _clean_title_for_query(title: str) -> str:
     return clean
 
 
+def _clean_artist_for_query(artist: str) -> str:
+    """Extract primary artist before separators like commas, ' y ', ' & ', ' feat.', etc."""
+    if not artist:
+        return ""
+    for sep in [",", " y ", " & ", " feat.", " ft.", " presenting", " (feat"]:
+        if sep in artist.lower():
+            idx = artist.lower().find(sep)
+            artist = artist[:idx]
+    return artist.strip()
+
+
+def response_handler(album, metadata, clean_title, clean_artist, cache_key, document, reply, error):
+    if document and not error and isinstance(document, dict):
+        unsynced_lyrics = document.get("plainLyrics")
+        synced_lyrics = document.get("syncedLyrics")
+        chosen = synced_lyrics or unsynced_lyrics
+        if chosen:
+            lyrics_cache[cache_key] = chosen
+            if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                metadata["lyrics"] = chosen
+            return
+
+    # Fallback to /api/search if /api/get didn't find lyrics directly
+    search_url = "https://lrclib.net/api/search"
+    search_query = f"{clean_title} {clean_artist}".strip()
+
+    def search_handler(doc, rep, err):
+        if doc and not err and isinstance(doc, list):
+            for item in doc:
+                if isinstance(item, dict):
+                    unsynced = item.get("plainLyrics")
+                    synced = item.get("syncedLyrics")
+                    chosen = synced or unsynced
+                    if chosen:
+                        lyrics_cache[cache_key] = chosen
+                        if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                            metadata["lyrics"] = chosen
+                        return
+        failed_lyrics_cache.add(cache_key)
+        log.debug(f"Lrclib Lyrics: Could not fetch lyrics for {cache_key}")
+
+    try:
+        album.tagger.webservice.get_url(
+            method="GET",
+            handler=search_handler,
+            parse_response_type='json',
+            url=search_url,
+            unencoded_queryargs={"q": search_query},
+            important=False
+        )
+    except Exception:
+        failed_lyrics_cache.add(cache_key)
+
+
 def _do_fetch_lyrics(album, metadata, clean_title, raw_artist, cache_key):
     try:
+        clean_artist = _clean_artist_for_query(raw_artist)
         req_args = {
             "track_name": clean_title,
-            "artist_name": raw_artist,
+            "artist_name": clean_artist,
         }
-        log.info("Lrclib Lyrics: Querying lrclib.net for title=%r, artist=%r", clean_title, raw_artist)
-        handler = partial(response_handler, metadata, cache_key)
+        log.info("Lrclib Lyrics: Querying lrclib.net for title=%r, artist=%r", clean_title, clean_artist)
+        handler = partial(response_handler, album, metadata, clean_title, clean_artist, cache_key)
         album.tagger.webservice.get_url(
             method="GET",
             handler=handler,
