@@ -63,6 +63,21 @@ extra_file_variables = {
     "directory": lambda file: os.path.basename(os.path.dirname(file))
 }
 
+# Unicode ranges for CJK (Chinese/Japanese) and Korean (Hangul)
+_CJK_HANGUL_RE = re.compile(
+    r'[\u3040-\u30ff'  # Hiragana + Katakana
+    r'\u3130-\u32ff'  # Hangul compat / Enclosed CJK
+    r'\u4e00-\u9faf'  # CJK Unified Ideographs
+    r'\ua960-\ua97f'  # Hangul Jamo Extended-A
+    r'\uac00-\ud7a3'  # Hangul Syllables
+    r'\ud7b0-\ud7ff]' # Hangul Jamo Extended-B
+)
+
+
+def _contains_cjk(text: str) -> bool:
+    """Return True if text contains any CJK / Hangul / Katakana / Hiragana characters."""
+    return bool(_CJK_HANGUL_RE.search(text))
+
 
 def _clean_title_for_query(title: str) -> str:
     """Extract primary title without dual-language romaji suffix or trailing feat."""
@@ -85,19 +100,30 @@ def _clean_artist_for_query(artist: str) -> str:
 
 
 def response_handler(album, metadata, clean_title, clean_artist, cache_key, document, reply, error):
+    # Whether the track's own metadata is in CJK (Korean/Japanese/Chinese)
+    track_is_cjk = _contains_cjk(clean_title) or _contains_cjk(clean_artist)
+
     if document and not error and isinstance(document, dict):
         unsynced_lyrics = document.get("plainLyrics")
         synced_lyrics = document.get("syncedLyrics")
         chosen = synced_lyrics or unsynced_lyrics
         if chosen:
-            lyrics_cache[cache_key] = chosen
-            if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                metadata["lyrics"] = chosen
-            return
+            # Skip CJK lyrics for non-CJK tracks: fall through to search fallback
+            if not track_is_cjk and _contains_cjk(chosen):
+                log.debug(
+                    "Lrclib Lyrics: /api/get returned CJK lyrics for non-CJK track %r, trying search",
+                    cache_key,
+                )
+            else:
+                lyrics_cache[cache_key] = chosen
+                if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                    metadata["lyrics"] = chosen
+                return
 
     # Fallback to /api/search if /api/get didn't find lyrics directly
     search_url = "https://lrclib.net/api/search"
     search_query = f"{clean_title} {clean_artist}".strip()
+
 
     def search_handler(doc, rep, err):
         if doc and not err and isinstance(doc, list):
@@ -107,12 +133,20 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                     synced = item.get("syncedLyrics")
                     chosen = synced or unsynced
                     if chosen:
+                        # Skip CJK results for non-CJK tracks (e.g. Korean
+                        # translations returned before the Spanish original).
+                        if not track_is_cjk and _contains_cjk(chosen):
+                            log.debug(
+                                "Lrclib Lyrics: Skipping CJK lyrics for non-CJK track %r",
+                                cache_key,
+                            )
+                            continue
                         lyrics_cache[cache_key] = chosen
                         if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                             metadata["lyrics"] = chosen
                         return
         failed_lyrics_cache.add(cache_key)
-        log.debug(f"Lrclib Lyrics: Could not fetch lyrics for {cache_key}")
+        log.debug("Lrclib Lyrics: Could not fetch lyrics for %r", cache_key)
 
     try:
         album.tagger.webservice.get_url(
