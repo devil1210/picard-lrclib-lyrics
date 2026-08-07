@@ -297,6 +297,12 @@ def fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, 
             log.info("Lrclib Lyrics: Applied LRCLIB backup line lyrics for %r", cache_key)
         else:
             failed_lyrics_cache.add(cache_key)
+            log.warning("Lrclib Lyrics: No lyrics found in LRCLIB, Musixmatch, or NetEase for title=%r, artist=%r", clean_title, clean_artist)
+            if hasattr(album, "tagger") and hasattr(album.tagger, "window") and hasattr(album.tagger.window, "set_statusbar_message"):
+                try:
+                    album.tagger.window.set_statusbar_message(f"Lrclib Lyrics: No lyrics found for '{clean_title}' by '{clean_artist}'")
+                except Exception:
+                    pass
     
     def netease_lyric_handler(doc, rep, err):
         if doc and not err and isinstance(doc, dict):
@@ -393,8 +399,9 @@ def get_lyrics(*args):
     metadata = file.metadata
 
     add_unsynced = _get_option(ADD_UNSYNCED_LYRICS, True)
-    add_synced = _get_option(ADD_SYNCED_LYRICS, False)
+    add_synced = _get_option(ADD_SYNCED_LYRICS, True)
     if not (add_unsynced or add_synced):
+        log.warning("Lrclib Lyrics: Both synced and unsynced lyrics options are disabled in settings")
         return
 
     raw_title = _clean_str(metadata.get("_original_title") or metadata.get("title"))
