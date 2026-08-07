@@ -172,11 +172,19 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
 def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None):
     title_is_cjk = _contains_cjk(clean_title)
 
+    def _notify_ui():
+        if album and hasattr(album, "_update_metadata"):
+            try:
+                album._update_metadata()
+            except Exception:
+                pass
+
     def apply_fallback():
         if lrclib_backup:
             lyrics_cache[cache_key] = lrclib_backup
             if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                 metadata["lyrics"] = lrclib_backup
+            _notify_ui()
             log.info("Lrclib Lyrics: Used LRCLIB backup line lyrics for %r", cache_key)
         else:
             fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
@@ -184,6 +192,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
     def set_lyrics(lyrics_text):
         lyrics_cache[cache_key] = lyrics_text
         metadata["lyrics"] = lyrics_text
+        _notify_ui()
         log.info("Lrclib Lyrics: Successfully updated metadata with Musixmatch RichSync Word-by-Word lyrics for %r", cache_key)
 
     def _worker():
@@ -191,18 +200,23 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
             import urllib.request
             import urllib.parse
             import json
+            import ssl
+
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
 
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
             token_url = "https://apic-desktop.musixmatch.com/ws/1.1/token.get?app_id=web-desktop-app-v1.0"
             req = urllib.request.Request(token_url, headers=headers)
-            tok_res = json.loads(urllib.request.urlopen(req, timeout=6).read().decode("utf-8"))
+            tok_res = json.loads(urllib.request.urlopen(req, timeout=6, context=ctx).read().decode("utf-8"))
             tok = tok_res.get("message", {}).get("body", {}).get("user_token")
 
             if tok:
                 q_art = urllib.parse.quote(clean_artist)
                 q_trk = urllib.parse.quote(clean_title)
                 search_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_artist={q_art}&q_track={q_trk}&page_size=1&usertoken={tok}&app_id=web-desktop-app-v1.0"
-                s_res = json.loads(urllib.request.urlopen(urllib.request.Request(search_url, headers=headers), timeout=6).read().decode("utf-8"))
+                s_res = json.loads(urllib.request.urlopen(urllib.request.Request(search_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
                 track_list = s_res.get("message", {}).get("body", {}).get("track_list", [])
 
                 if track_list and len(track_list) > 0:
@@ -210,7 +224,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                     if track_id:
                         # 1. Try RichSync (Word-level)
                         rich_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.richsync.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
-                        r_res = json.loads(urllib.request.urlopen(urllib.request.Request(rich_url, headers=headers), timeout=6).read().decode("utf-8"))
+                        r_res = json.loads(urllib.request.urlopen(urllib.request.Request(rich_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
                         rich_body = r_res.get("message", {}).get("body", {}).get("richsync", {}).get("richsync_body")
 
                         if rich_body:
@@ -242,7 +256,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
 
                         # 2. Try Subtitle fallback
                         sub_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
-                        sub_res = json.loads(urllib.request.urlopen(urllib.request.Request(sub_url, headers=headers), timeout=6).read().decode("utf-8"))
+                        sub_res = json.loads(urllib.request.urlopen(urllib.request.Request(sub_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
                         sub_body = sub_res.get("message", {}).get("body", {}).get("subtitle", {}).get("subtitle_body")
                         if sub_body and isinstance(sub_body, str) and sub_body.strip():
                             if not title_is_cjk and _contains_cjk(sub_body):
