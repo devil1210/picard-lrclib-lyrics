@@ -363,18 +363,24 @@ def _get_musixmatch_token(headers, ctx):
     with _token_lock:
         if _cached_musixmatch_token:
             return _cached_musixmatch_token
-        try:
-            token_url = "https://apic-desktop.musixmatch.com/ws/1.1/token.get?app_id=web-desktop-app-v1.0"
-            req = urllib.request.Request(token_url, headers=headers)
-            tok_res = json.loads(urllib.request.urlopen(req, timeout=6, context=ctx).read().decode("utf-8"))
-            tok = tok_res.get("message", {}).get("body", {}).get("user_token")
-            if tok:
-                _cached_musixmatch_token = tok
-                log.info("Lrclib Lyrics: [Musixmatch] Acquired and cached global user_token: %s", tok)
-                return tok
-        except Exception as e:
-            log.warning("Lrclib Lyrics: [Musixmatch] Token fetch error: %s", e)
-    return None
+        import time
+        for attempt in range(3):
+            try:
+                token_url = "https://apic-desktop.musixmatch.com/ws/1.1/token.get?app_id=web-desktop-app-v1.0"
+                req = urllib.request.Request(token_url, headers=headers)
+                tok_res = json.loads(urllib.request.urlopen(req, timeout=8, context=ctx).read().decode("utf-8"))
+                tok = tok_res.get("message", {}).get("body", {}).get("user_token")
+                if tok:
+                    _cached_musixmatch_token = tok
+                    log.info("Lrclib Lyrics: [Musixmatch] Acquired and cached global user_token: %s", tok)
+                    return tok
+            except Exception as e:
+                log.warning("Lrclib Lyrics: [Musixmatch] Token fetch attempt %d error: %s", attempt + 1, e)
+                time.sleep(0.4)
+
+        _cached_musixmatch_token = "26080701bbea0d63c1c51213ff492cbbb4383163c9047aa8f6ebf1"
+        log.info("Lrclib Lyrics: [Musixmatch] Using fallback desktop user_token")
+        return _cached_musixmatch_token
 
 
 def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None):
@@ -455,16 +461,33 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                                 ts = l.get("ts", 0)
                                 min_s = int(ts // 60)
                                 sec_s = int(ts % 60)
-                                ms_s = int((ts % 1) * 1000)
-                                line_str = f"[{min_s:02d}:{sec_s:02d}.{ms_s:03d}]"
+                                cs_s = int(round((ts % 1) * 100))
+                                if cs_s >= 100:
+                                    sec_s += 1
+                                    cs_s -= 100
+                                if sec_s >= 60:
+                                    min_s += 1
+                                    sec_s -= 60
+                                line_str = f"[{min_s:02d}:{sec_s:02d}.{cs_s:02d}]"
                                 for w in l.get("l", []):
                                     c = w.get("c", "")
+                                    if not c:
+                                        continue
                                     off = w.get("o", 0)
                                     word_ts = ts + off
                                     w_min = int(word_ts // 60)
                                     w_sec = int(word_ts % 60)
-                                    w_ms = int((word_ts % 1) * 1000)
-                                    line_str += f"<{w_min:02d}:{w_sec:02d}.{w_ms:03d}>{c}"
+                                    w_cs = int(round((word_ts % 1) * 100))
+                                    if w_cs >= 100:
+                                        w_sec += 1
+                                        w_cs -= 100
+                                    if w_sec >= 60:
+                                        w_min += 1
+                                        w_sec -= 60
+                                    if not c.strip():
+                                        line_str += c
+                                    else:
+                                        line_str += f"<{w_min:02d}:{w_sec:02d}.{w_cs:02d}>{c}"
                                 lrc_lines.append(line_str)
 
                             enhanced_lrc = "\n".join(lrc_lines)
