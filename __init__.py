@@ -251,7 +251,8 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                                 QTimer.singleShot(0, lambda text=sub_body: set_lyrics(text))
                                 return
         except Exception as e:
-            log.warning("Lrclib Lyrics: Musixmatch thread error for %r: %s", cache_key, e)
+            import traceback
+            log.warning("Lrclib Lyrics: Musixmatch thread error for %r: %s\n%s", cache_key, e, traceback.format_exc())
 
         QTimer.singleShot(0, lambda: apply_fallback())
 
@@ -452,15 +453,36 @@ def export_lrc_file(*args):
             log.error(f"Error exporting LRC file {lrc_path}: {e}")
 
 
-class ImportLrc(BaseAction):
-    NAME = "Import LRC file"
+from picard.i18n import N_
+
+class FetchLyricsAction(BaseAction):
+    NAME = N_("Fetch / Refresh Lyrics (Word Sync Karaoke)")
+    TITLE = N_("Fetch / Refresh Lyrics (Word Sync Karaoke)")
 
     def callback(self, objs):
-        pass
+        for obj in objs:
+            files = []
+            if hasattr(obj, "files"):
+                files = obj.files
+            elif hasattr(obj, "metadata") and hasattr(obj, "filename"):
+                files = [obj]
+
+            for file in files:
+                track = getattr(file, "track", None) or obj
+                clean_title = _clean_title_for_query(_clean_str(file.metadata.get("title")))
+                clean_artist = _clean_artist_for_query(_clean_str(file.metadata.get("artist")))
+                if clean_title and clean_artist:
+                    cache_key = (clean_title.lower().strip(), clean_artist.lower().strip())
+                    lyrics_cache.pop(cache_key, None)
+                    failed_lyrics_cache.discard(cache_key)
+                    pending_fetches.discard(cache_key)
+                    file.metadata.pop("lyrics", None)
+                    get_lyrics(track, file)
 
 
 class PublishToLrclibAction(BaseAction):
-    NAME = "Publish / Submit lyrics to LRCLIB"
+    NAME = N_("Publish / Submit lyrics to LRCLIB")
+    TITLE = N_("Publish / Submit lyrics to LRCLIB")
 
     def callback(self, objs):
         import hashlib
@@ -485,7 +507,6 @@ class PublishToLrclibAction(BaseAction):
                 duration = int(obj.length / 1000)
 
             try:
-                # 1. Request PoW Challenge
                 req = Request("https://lrclib.net/api/request-challenge", method="POST")
                 with urlopen(req, timeout=10) as resp:
                     challenge = json.loads(resp.read().decode("utf-8"))
@@ -493,7 +514,6 @@ class PublishToLrclibAction(BaseAction):
                 prefix = challenge.get("prefix", "")
                 target = challenge.get("target", "")
 
-                # 2. Solve PoW
                 nonce = 0
                 token = ""
                 while nonce < 2000000:
@@ -506,7 +526,6 @@ class PublishToLrclibAction(BaseAction):
                 if not token:
                     token = f"{prefix}:{nonce}"
 
-                # 3. Publish Lyrics
                 payload = {
                     "trackName": title,
                     "artistName": artist,
@@ -537,73 +556,6 @@ class PublishToLrclibAction(BaseAction):
                 log.error("Lrclib Publish Error for %s - %s: %s", artist, title, e)
 
 
-class LrclibLyricsOptions(OptionsPage):
-    NAME = "lrclib_lyrics"
-    TITLE = "Lrclib Lyrics"
-    PARENT = "plugins"
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        from PyQt6 import QtWidgets
-
-        self.cb_unsynced = QtWidgets.QCheckBox("Download and embed unsynced lyrics", self)
-        self.cb_synced = QtWidgets.QCheckBox("Download and embed synced lyrics (Karaoke / Timestamped LRC)", self)
-        self.cb_never_replace = QtWidgets.QCheckBox("Never replace any embedded lyrics if already present", self)
-        self.cb_export_lrc = QtWidgets.QCheckBox("Export lyrics to .lrc file when saving (priority to synced Karaoke lyrics)", self)
-        self.cb_sidecar = QtWidgets.QCheckBox("Save the LRC file as a sidecar file to the audio file (for Navidrome & Feishin)", self)
-        self.cb_never_replace_lrc = QtWidgets.QCheckBox("Never replace lrc files if already present", self)
-
-        vbox = QtWidgets.QVBoxLayout(self)
-        vbox.addWidget(self.cb_unsynced)
-        vbox.addWidget(self.cb_synced)
-        vbox.addWidget(self.cb_never_replace)
-        vbox.addWidget(self.cb_export_lrc)
-        vbox.addWidget(self.cb_sidecar)
-        vbox.addWidget(self.cb_never_replace_lrc)
-        vbox.addStretch()
-
-    def load(self):
-        self.cb_unsynced.setChecked(bool(self.api.plugin_config[ADD_UNSYNCED_LYRICS]))
-        self.cb_synced.setChecked(bool(self.api.plugin_config[ADD_SYNCED_LYRICS]))
-        self.cb_never_replace.setChecked(bool(self.api.plugin_config[NEVER_REPLACE_LYRICS]))
-        self.cb_export_lrc.setChecked(bool(self.api.plugin_config[EXPORT_LRC]))
-        self.cb_sidecar.setChecked(bool(self.api.plugin_config[LRC_AS_SIDECAR]))
-        self.cb_never_replace_lrc.setChecked(bool(self.api.plugin_config[NEVER_REPLACE_LRC]))
-
-    def save(self):
-        self.api.plugin_config[ADD_UNSYNCED_LYRICS] = self.cb_unsynced.isChecked()
-        self.api.plugin_config[ADD_SYNCED_LYRICS] = self.cb_synced.isChecked()
-        self.api.plugin_config[NEVER_REPLACE_LYRICS] = self.cb_never_replace.isChecked()
-        self.api.plugin_config[EXPORT_LRC] = self.cb_export_lrc.isChecked()
-        self.api.plugin_config[LRC_AS_SIDECAR] = self.cb_sidecar.isChecked()
-        self.api.plugin_config[NEVER_REPLACE_LRC] = self.cb_never_replace_lrc.isChecked()
-
-
-class FetchLyricsAction(BaseAction):
-    NAME = "Fetch / Refresh Lyrics (Word Sync Karaoke)"
-
-    def callback(self, objs):
-        for obj in objs:
-            files = []
-            if hasattr(obj, "files"):
-                files = obj.files
-            elif hasattr(obj, "metadata") and hasattr(obj, "filename"):
-                files = [obj]
-
-            for file in files:
-                track = getattr(file, "track", None) or obj
-                clean_title = _clean_title_for_query(_clean_str(file.metadata.get("title")))
-                clean_artist = _clean_artist_for_query(_clean_str(file.metadata.get("artist")))
-                if clean_title and clean_artist:
-                    cache_key = (clean_title.lower().strip(), clean_artist.lower().strip())
-                    lyrics_cache.pop(cache_key, None)
-                    failed_lyrics_cache.discard(cache_key)
-                    pending_fetches.discard(cache_key)
-                    # Clear existing line lyrics to force fresh word-sync fetch
-                    file.metadata.pop("lyrics", None)
-                    get_lyrics(track, file)
-
-
 def enable(api: PluginApi):
     global _api
     _api = api
@@ -623,7 +575,6 @@ def enable(api: PluginApi):
     api.register_file_post_save_processor(export_lrc_file)
     api.register_track_action(FetchLyricsAction)
     api.register_file_action(FetchLyricsAction)
-    api.register_track_action(ImportLrc)
     api.register_track_action(PublishToLrclibAction)
     api.register_file_action(PublishToLrclibAction)
     api.register_options_page(LrclibLyricsOptions)
