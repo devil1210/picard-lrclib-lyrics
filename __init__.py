@@ -237,9 +237,19 @@ def fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache
     t.start()
 
 
-def _update_picard_ui(album):
+def _update_picard_ui(album, track_obj=None, file_obj=None):
     if not album:
         return
+    if file_obj and hasattr(file_obj, "update"):
+        try:
+            file_obj.update()
+        except Exception:
+            pass
+    if track_obj and hasattr(track_obj, "update"):
+        try:
+            track_obj.update()
+        except Exception:
+            pass
     if hasattr(album, "update"):
         try:
             album.update()
@@ -385,6 +395,25 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
     def set_lyrics(lyrics_text, provider_name):
         lyrics_cache[cache_key] = lyrics_text
         metadata["lyrics"] = lyrics_text
+        if album and hasattr(album, "tracks"):
+            for trk in album.tracks:
+                t_title = _clean_str(trk.metadata.get("_original_title") or trk.metadata.get("title")).lower()
+                t_artist = _clean_str(trk.metadata.get("_original_artist") or trk.metadata.get("artist")).lower()
+                if (t_title, t_artist) == cache_key or trk.metadata == metadata:
+                    trk.metadata["lyrics"] = lyrics_text
+                    if hasattr(trk, "files"):
+                        for f in trk.files:
+                            f.metadata["lyrics"] = lyrics_text
+                            if hasattr(f, "update"):
+                                try:
+                                    f.update()
+                                except Exception:
+                                    pass
+                    if hasattr(trk, "update"):
+                        try:
+                            trk.update()
+                        except Exception:
+                            pass
         _update_picard_ui(album)
         log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r", provider_name, cache_key)
 
