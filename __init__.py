@@ -183,8 +183,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
 
     def set_lyrics(lyrics_text):
         lyrics_cache[cache_key] = lyrics_text
-        if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-            metadata["lyrics"] = lyrics_text
+        metadata["lyrics"] = lyrics_text
         log.info("Lrclib Lyrics: Successfully updated metadata with Musixmatch RichSync Word-by-Word lyrics for %r", cache_key)
 
     def _worker():
@@ -381,19 +380,22 @@ def get_lyrics(*args):
         return
 
     never_replace = _get_option(NEVER_REPLACE_LYRICS, False)
-    if never_replace and metadata.get("lyrics"):
+    existing_lyrics = metadata.get("lyrics") or ""
+
+    # If lyrics exist AND have word timestamps <mm:ss.xxx>, skip unless user requested replacement
+    if never_replace or ("<" in existing_lyrics and ">" in existing_lyrics):
         return
 
     # Prepare lookup key
     clean_title = _clean_title_for_query(raw_title)
     cache_key = (clean_title.lower().strip(), raw_artist.lower().strip())
 
-    # Check positive cache
+    # Check positive cache (only accept if cached version is word-synced or we have no lyrics)
     if cache_key in lyrics_cache:
         cached_lyrics = lyrics_cache[cache_key]
-        if cached_lyrics and not metadata.get("lyrics"):
+        if cached_lyrics and ("<" in cached_lyrics and ">" in cached_lyrics or not existing_lyrics):
             metadata["lyrics"] = cached_lyrics
-        return
+            return
 
     # Check negative cache and pending fetches (fast-fail in 0ms)
     if cache_key in failed_lyrics_cache or cache_key in pending_fetches:
