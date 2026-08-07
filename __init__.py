@@ -121,9 +121,9 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                 if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                     metadata["lyrics"] = chosen
                 return
-            # Otherwise, try Musixmatch RichSync for word-level timestamps
+            # Otherwise, try Musixmatch RichSync for word-level timestamps, passing LRCLIB line lyrics as backup
             log.info("Lrclib Lyrics: LRCLIB returned line lyrics for %r; trying Musixmatch RichSync for word-level sync", cache_key)
-            fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+            fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
             return
 
     # Fallback to /api/search or Musixmatch RichSync
@@ -147,9 +147,13 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                         if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                             metadata["lyrics"] = lyrics
                         return
+                # Line lyrics backup
+                log.debug("Lrclib Lyrics: LRCLIB search yielded line lyrics for %r, trying Musixmatch RichSync", cache_key)
+                fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=candidates[0])
+                return
 
-        log.debug("Lrclib Lyrics: LRCLIB search yielded no word-synced lyrics for %r, trying Musixmatch RichSync", cache_key)
-        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+        log.debug("Lrclib Lyrics: LRCLIB search yielded no lyrics for %r, trying Musixmatch RichSync", cache_key)
+        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
 
     try:
         album.tagger.webservice.get_url(
@@ -161,11 +165,21 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
             important=False
         )
     except Exception:
-        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
 
 
-def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key):
-    token_url = "https://apic-desktop.musixmatch.com/ws/1.1/token.get?app_id=web-desktop-app-v1.0"
+def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None):
+    token_url = "https://apic-desktop.musixmatch.com/ws/1.1/token.get"
+    title_is_cjk = _contains_cjk(clean_title)
+
+    def apply_fallback():
+        if lrclib_backup:
+            lyrics_cache[cache_key] = lrclib_backup
+            if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                metadata["lyrics"] = lrclib_backup
+            log.info("Lrclib Lyrics: Used LRCLIB backup line lyrics for %r", cache_key)
+        else:
+            fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
     
     def token_handler(doc, rep, err):
         if doc and not err and isinstance(doc, dict):
@@ -179,7 +193,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                         if track_list and len(track_list) > 0:
                             track_id = track_list[0].get("track", {}).get("track_id")
                             if track_id:
-                                rich_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.richsync.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                                rich_url = "https://apic-desktop.musixmatch.com/ws/1.1/track.richsync.get"
                                 
                                 def rich_handler(r_doc, r_rep, r_err):
                                     if r_doc and not r_err and isinstance(r_doc, dict):
@@ -207,38 +221,58 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                                                 
                                                 enhanced_lrc = "\n".join(lrc_lines)
                                                 if enhanced_lrc.strip():
-                                                    lyrics_cache[cache_key] = enhanced_lrc
-                                                    if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                                                        metadata["lyrics"] = enhanced_lrc
-                                                    log.info("Lrclib Lyrics: Successfully fetched Musixmatch RichSync Word-by-Word lyrics for %r", cache_key)
-                                                    return
+                                                    if not title_is_cjk and _contains_cjk(enhanced_lrc):
+                                                        log.warning("Lrclib Lyrics: Musixmatch RichSync returned CJK for non-CJK track %r, rejecting", cache_key)
+                                                    else:
+                                                        lyrics_cache[cache_key] = enhanced_lrc
+                                                        if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                                                            metadata["lyrics"] = enhanced_lrc
+                                                        log.info("Lrclib Lyrics: Successfully fetched Musixmatch RichSync Word-by-Word lyrics for %r", cache_key)
+                                                        return
                                             except Exception as ex:
                                                 log.error("Musixmatch RichSync parse error: %s", ex)
 
-                                    sub_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                                    sub_url = "https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get"
                                     
                                     def sub_handler(sub_doc, sub_rep, sub_err):
                                         if sub_doc and not sub_err and isinstance(sub_doc, dict):
                                             sub_body = sub_doc.get("message", {}).get("body", {}).get("subtitle", {}).get("subtitle_body")
                                             if sub_body and isinstance(sub_body, str) and sub_body.strip():
-                                                lyrics_cache[cache_key] = sub_body
-                                                if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                                                    metadata["lyrics"] = sub_body
-                                                log.info("Lrclib Lyrics: Successfully fetched Musixmatch subtitle lyrics for %r", cache_key)
-                                                return
-                                        fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+                                                if not title_is_cjk and _contains_cjk(sub_body):
+                                                    log.warning("Lrclib Lyrics: Musixmatch subtitle returned CJK for non-CJK track %r, rejecting", cache_key)
+                                                else:
+                                                    lyrics_cache[cache_key] = sub_body
+                                                    if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                                                        metadata["lyrics"] = sub_body
+                                                    log.info("Lrclib Lyrics: Successfully fetched Musixmatch subtitle lyrics for %r", cache_key)
+                                                    return
+                                        apply_fallback()
 
                                     try:
-                                        album.tagger.webservice.get_url(method="GET", handler=sub_handler, parse_response_type='json', url=sub_url, important=False)
+                                        album.tagger.webservice.get_url(
+                                            method="GET",
+                                            handler=sub_handler,
+                                            parse_response_type='json',
+                                            url=sub_url,
+                                            unencoded_queryargs={"format": "json", "track_id": str(track_id), "usertoken": str(tok), "app_id": "web-desktop-app-v1.0"},
+                                            important=False
+                                        )
                                     except Exception:
-                                        fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+                                        apply_fallback()
 
                                 try:
-                                    album.tagger.webservice.get_url(method="GET", handler=rich_handler, parse_response_type='json', url=rich_url, important=False)
+                                    album.tagger.webservice.get_url(
+                                        method="GET",
+                                        handler=rich_handler,
+                                        parse_response_type='json',
+                                        url=rich_url,
+                                        unencoded_queryargs={"format": "json", "track_id": str(track_id), "usertoken": str(tok), "app_id": "web-desktop-app-v1.0"},
+                                        important=False
+                                    )
                                 except Exception:
-                                    fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+                                    apply_fallback()
                                 return
-                    fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+                    apply_fallback()
 
                 try:
                     album.tagger.webservice.get_url(
@@ -246,13 +280,13 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                         handler=search_handler,
                         parse_response_type='json',
                         url=search_url,
-                        unencoded_queryargs={"q_artist": clean_artist, "q_track": clean_title, "page_size": 1, "usertoken": tok, "app_id": "web-desktop-app-v1.0"},
+                        unencoded_queryargs={"format": "json", "q_artist": clean_artist, "q_track": clean_title, "page_size": "1", "usertoken": str(tok), "app_id": "web-desktop-app-v1.0"},
                         important=False
                     )
                     return
                 except Exception:
-                    fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
-        fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+                    apply_fallback()
+        apply_fallback()
 
     try:
         album.tagger.webservice.get_url(
@@ -260,15 +294,26 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
             handler=token_handler,
             parse_response_type='json',
             url=token_url,
+            unencoded_queryargs={"app_id": "web-desktop-app-v1.0"},
             important=False
         )
     except Exception:
-        fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+        apply_fallback()
 
 
-def fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key):
+def fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None):
     search_url = "http://music.163.com/api/search/get"
     query = f"{clean_title} {clean_artist}".strip()
+    title_is_cjk = _contains_cjk(clean_title)
+
+    def apply_final_backup():
+        if lrclib_backup:
+            lyrics_cache[cache_key] = lrclib_backup
+            if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                metadata["lyrics"] = lrclib_backup
+            log.info("Lrclib Lyrics: Applied LRCLIB backup line lyrics for %r", cache_key)
+        else:
+            failed_lyrics_cache.add(cache_key)
     
     def netease_lyric_handler(doc, rep, err):
         if doc and not err and isinstance(doc, dict):
@@ -276,12 +321,16 @@ def fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key):
             klyric_data = doc.get("klyric", {})
             chosen = klyric_data.get("lyric") or lrc_data.get("lyric")
             if chosen and isinstance(chosen, str) and chosen.strip():
+                if not title_is_cjk and _contains_cjk(chosen):
+                    log.warning("Lrclib Lyrics: NetEase returned CJK lyrics for non-CJK track %r, rejecting", cache_key)
+                    apply_final_backup()
+                    return
                 lyrics_cache[cache_key] = chosen
                 if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                     metadata["lyrics"] = chosen
                 log.info("Lrclib Lyrics: Successfully fetched NetEase lyrics for %r", cache_key)
                 return
-        failed_lyrics_cache.add(cache_key)
+        apply_final_backup()
 
     def netease_search_handler(doc, rep, err):
         if doc and not err and isinstance(doc, dict):
@@ -295,16 +344,17 @@ def fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key):
             if isinstance(res, dict) and "songs" in res and res["songs"]:
                 song_id = res["songs"][0].get("id")
                 if song_id:
-                    lyric_url = f"http://music.163.com/api/song/lyric?os=pc&id={song_id}&lv=-1&kv=-1&tv=-1"
+                    lyric_url = "http://music.163.com/api/song/lyric"
                     album.tagger.webservice.get_url(
                         method="GET",
                         handler=netease_lyric_handler,
                         parse_response_type='json',
                         url=lyric_url,
+                        unencoded_queryargs={"os": "pc", "id": str(song_id), "lv": "-1", "kv": "-1", "tv": "-1"},
                         important=False
                     )
                     return
-        failed_lyrics_cache.add(cache_key)
+        apply_final_backup()
 
     try:
         album.tagger.webservice.get_url(
@@ -312,11 +362,11 @@ def fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key):
             handler=netease_search_handler,
             parse_response_type='json',
             url=search_url,
-            unencoded_queryargs={"s": query, "type": 1, "offset": 0, "limit": 1},
+            unencoded_queryargs={"s": query, "type": "1", "offset": "0", "limit": "1"},
             important=False
         )
     except Exception:
-        failed_lyrics_cache.add(cache_key)
+        apply_final_backup()
 
 
 def _do_fetch_lyrics(album, metadata, clean_title, raw_artist, cache_key):
