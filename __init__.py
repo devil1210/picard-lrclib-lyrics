@@ -173,8 +173,8 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                     metadata["lyrics"] = lyrics
                 return
 
-        failed_lyrics_cache.add(cache_key)
-        log.debug("Lrclib Lyrics: Could not fetch lyrics for %r", cache_key)
+        log.debug("Lrclib Lyrics: LRCLIB search yielded no lyrics for %r, falling back to NetEase", cache_key)
+        fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
 
     try:
         album.tagger.webservice.get_url(
@@ -183,6 +183,59 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
             parse_response_type='json',
             url=search_url,
             unencoded_queryargs={"q": search_query},
+            important=False
+        )
+    except Exception:
+        fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+
+
+def fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key):
+    search_url = "http://music.163.com/api/search/get"
+    query = f"{clean_title} {clean_artist}".strip()
+    
+    def netease_lyric_handler(doc, rep, err):
+        if doc and not err and isinstance(doc, dict):
+            lrc_data = doc.get("lrc", {})
+            klyric_data = doc.get("klyric", {})
+            chosen = klyric_data.get("lyric") or lrc_data.get("lyric")
+            if chosen and isinstance(chosen, str) and chosen.strip():
+                lyrics_cache[cache_key] = chosen
+                if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                    metadata["lyrics"] = chosen
+                log.info("Lrclib Lyrics: Successfully fetched NetEase lyrics for %r", cache_key)
+                return
+        failed_lyrics_cache.add(cache_key)
+
+    def netease_search_handler(doc, rep, err):
+        if doc and not err and isinstance(doc, dict):
+            res = doc.get("result")
+            if isinstance(res, str):
+                import json
+                try:
+                    res = json.loads(res)
+                except Exception:
+                    res = {}
+            if isinstance(res, dict) and "songs" in res and res["songs"]:
+                song_id = res["songs"][0].get("id")
+                if song_id:
+                    lyric_url = f"http://music.163.com/api/song/lyric?os=pc&id={song_id}&lv=-1&kv=-1&tv=-1"
+                    album.tagger.webservice.get_url(
+                        method="GET",
+                        handler=netease_lyric_handler,
+                        parse_response_type='json',
+                        url=lyric_url,
+                        important=False
+                    )
+                    return
+        failed_lyrics_cache.add(cache_key)
+
+    try:
+        album.tagger.webservice.get_url(
+            method="GET",
+            handler=netease_search_handler,
+            parse_response_type='json',
+            url=search_url,
+            unencoded_queryargs={"s": query, "type": 1, "offset": 0, "limit": 1},
             important=False
         )
     except Exception:
