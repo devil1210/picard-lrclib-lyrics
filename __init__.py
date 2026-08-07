@@ -240,11 +240,6 @@ def fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache
 def _update_picard_ui(album):
     if not album:
         return
-    if hasattr(album, "update"):
-        try:
-            album.update()
-        except Exception:
-            pass
     if hasattr(album, "tagger") and hasattr(album.tagger, "window"):
         win = album.tagger.window
         if hasattr(win, "metadata_box") and hasattr(win.metadata_box, "update"):
@@ -252,25 +247,6 @@ def _update_picard_ui(album):
                 win.metadata_box.update()
             except Exception:
                 pass
-        if hasattr(win, "update"):
-            try:
-                win.update()
-            except Exception:
-                pass
-    if hasattr(album, "tracks"):
-        for track in album.tracks:
-            if hasattr(track, "update"):
-                try:
-                    track.update()
-                except Exception:
-                    pass
-            if hasattr(track, "files"):
-                for file in track.files:
-                    if hasattr(file, "update"):
-                        try:
-                            file.update()
-                        except Exception:
-                            pass
 
 
 def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
@@ -423,16 +399,6 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                     if hasattr(trk, "files"):
                         for f in trk.files:
                             f.metadata["lyrics"] = lyrics_text
-                            if hasattr(f, "update"):
-                                try:
-                                    f.update()
-                                except Exception:
-                                    pass
-                    if hasattr(trk, "update"):
-                        try:
-                            trk.update()
-                        except Exception:
-                            pass
         _update_picard_ui(album)
         preview_lines = "\n".join(lyrics_text.splitlines()[:5])
         log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r:\n--- LYRICS PREVIEW (First 5 lines) ---\n%s\n--- END PREVIEW ---", provider_name, cache_key, preview_lines)
