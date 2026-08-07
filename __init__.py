@@ -237,24 +237,26 @@ def fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache
     t.start()
 
 
-def _update_picard_ui(album, track_obj=None, file_obj=None):
+def _update_picard_ui(album):
     if not album:
         return
-    if file_obj and hasattr(file_obj, "update"):
-        try:
-            file_obj.update()
-        except Exception:
-            pass
-    if track_obj and hasattr(track_obj, "update"):
-        try:
-            track_obj.update()
-        except Exception:
-            pass
     if hasattr(album, "update"):
         try:
             album.update()
         except Exception:
             pass
+    if hasattr(album, "tagger") and hasattr(album.tagger, "window"):
+        win = album.tagger.window
+        if hasattr(win, "metadata_box") and hasattr(win.metadata_box, "update"):
+            try:
+                win.metadata_box.update()
+            except Exception:
+                pass
+        if hasattr(win, "update"):
+            try:
+                win.update()
+            except Exception:
+                pass
     if hasattr(album, "tracks"):
         for track in album.tracks:
             if hasattr(track, "update"):
@@ -275,7 +277,8 @@ def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
     lyrics_cache[cache_key] = lyrics_text
     metadata["lyrics"] = lyrics_text
     _update_picard_ui(album)
-    log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r", provider_name, cache_key)
+    preview_lines = "\n".join(lyrics_text.splitlines()[:5])
+    log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r:\n--- LYRICS PREVIEW (First 5 lines) ---\n%s\n--- END PREVIEW ---", provider_name, cache_key, preview_lines)
 
 
 def response_handler(album, metadata, clean_title, clean_artist, cache_key, document, reply, error):
@@ -421,7 +424,8 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                         except Exception:
                             pass
         _update_picard_ui(album)
-        log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r", provider_name, cache_key)
+        preview_lines = "\n".join(lyrics_text.splitlines()[:5])
+        log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r:\n--- LYRICS PREVIEW (First 5 lines) ---\n%s\n--- END PREVIEW ---", provider_name, cache_key, preview_lines)
 
     def _worker():
         try:
