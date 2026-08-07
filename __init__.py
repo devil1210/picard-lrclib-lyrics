@@ -386,6 +386,16 @@ def _get_musixmatch_token(headers, ctx):
         return _cached_musixmatch_token
 
 
+def _get_dict_path(d, keys, default=None):
+    curr = d
+    for k in keys:
+        if isinstance(curr, dict):
+            curr = curr.get(k)
+        else:
+            return default
+    return curr if curr is not None else default
+
+
 def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None):
     title_is_cjk = _contains_cjk(clean_title)
 
@@ -447,77 +457,79 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                 q_trk = urllib.parse.quote(clean_title)
                 search_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_artist={q_art}&q_track={q_trk}&page_size=1&usertoken={tok}&app_id=web-desktop-app-v1.0"
                 s_res = json.loads(urllib.request.urlopen(urllib.request.Request(search_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
-                track_list = s_res.get("message", {}).get("body", {}).get("track_list", [])
+                track_list = _get_dict_path(s_res, ["message", "body", "track_list"], default=[])
 
-                if track_list and len(track_list) > 0:
-                    track_id = track_list[0].get("track", {}).get("track_id")
-                    if track_id:
-                        log.info("Lrclib Lyrics: [Musixmatch] Found track_id=%s, fetching RichSync Word-Level Karaoke...", track_id)
-                        # 1. Try RichSync (Word-level)
-                        rich_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.richsync.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
-                        r_res = json.loads(urllib.request.urlopen(urllib.request.Request(rich_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
-                        rich_body = r_res.get("message", {}).get("body", {}).get("richsync", {}).get("richsync_body")
+                if track_list and isinstance(track_list, list) and len(track_list) > 0:
+                    track_item = track_list[0]
+                    if isinstance(track_item, dict):
+                        track_id = _get_dict_path(track_item, ["track", "track_id"])
+                        if track_id:
+                            log.info("Lrclib Lyrics: [Musixmatch] Found track_id=%s, fetching RichSync Word-Level Karaoke...", track_id)
+                            # 1. Try RichSync (Word-level)
+                            rich_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.richsync.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                            r_res = json.loads(urllib.request.urlopen(urllib.request.Request(rich_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
+                            rich_body = _get_dict_path(r_res, ["message", "body", "richsync", "richsync_body"])
 
-                        if rich_body:
-                            lines = json.loads(rich_body)
-                            lrc_lines = []
-                            for l in lines:
-                                ts = l.get("ts", 0)
-                                min_s = int(ts // 60)
-                                sec_s = int(ts % 60)
-                                cs_s = int(round((ts % 1) * 100))
-                                if cs_s >= 100:
-                                    sec_s += 1
-                                    cs_s -= 100
-                                if sec_s >= 60:
-                                    min_s += 1
-                                    sec_s -= 60
-                                line_str = f"[{min_s:02d}:{sec_s:02d}.{cs_s:02d}]"
-                                for w in l.get("l", []):
-                                    c = w.get("c", "")
-                                    if not c:
-                                        continue
-                                    off = w.get("o", 0)
-                                    word_ts = ts + off
-                                    w_min = int(word_ts // 60)
-                                    w_sec = int(word_ts % 60)
-                                    w_cs = int(round((word_ts % 1) * 100))
-                                    if w_cs >= 100:
-                                        w_sec += 1
-                                        w_cs -= 100
-                                    if w_sec >= 60:
-                                        w_min += 1
-                                        w_sec -= 60
-                                    if not c.strip():
-                                        line_str += c
+                            if rich_body:
+                                lines = json.loads(rich_body)
+                                lrc_lines = []
+                                for l in lines:
+                                    ts = l.get("ts", 0)
+                                    min_s = int(ts // 60)
+                                    sec_s = int(ts % 60)
+                                    cs_s = int(round((ts % 1) * 100))
+                                    if cs_s >= 100:
+                                        sec_s += 1
+                                        cs_s -= 100
+                                    if sec_s >= 60:
+                                        min_s += 1
+                                        sec_s -= 60
+                                    line_str = f"[{min_s:02d}:{sec_s:02d}.{cs_s:02d}]"
+                                    for w in l.get("l", []):
+                                        c = w.get("c", "")
+                                        if not c:
+                                            continue
+                                        off = w.get("o", 0)
+                                        word_ts = ts + off
+                                        w_min = int(word_ts // 60)
+                                        w_sec = int(word_ts % 60)
+                                        w_cs = int(round((word_ts % 1) * 100))
+                                        if w_cs >= 100:
+                                            w_sec += 1
+                                            w_cs -= 100
+                                        if w_sec >= 60:
+                                            w_min += 1
+                                            w_sec -= 60
+                                        if not c.strip():
+                                            line_str += c
+                                        else:
+                                            line_str += f"<{w_min:02d}:{w_sec:02d}.{w_cs:02d}>{c}"
+                                    lrc_lines.append(line_str)
+
+                                enhanced_lrc = "\n".join(lrc_lines)
+                                if enhanced_lrc.strip():
+                                    if not title_is_cjk and _contains_cjk(enhanced_lrc):
+                                        log.warning("Lrclib Lyrics: [Musixmatch] RichSync returned CJK for non-CJK track %r, rejecting", cache_key)
                                     else:
-                                        line_str += f"<{w_min:02d}:{w_sec:02d}.{w_cs:02d}>{c}"
-                                lrc_lines.append(line_str)
-
-                            enhanced_lrc = "\n".join(lrc_lines)
-                            if enhanced_lrc.strip():
-                                if not title_is_cjk and _contains_cjk(enhanced_lrc):
-                                    log.warning("Lrclib Lyrics: [Musixmatch] RichSync returned CJK for non-CJK track %r, rejecting", cache_key)
-                                else:
-                                    log.info("Lrclib Lyrics: [Musixmatch] RichSync Word-Level Karaoke parsed (%d lines, %d bytes)", len(lrc_lines), len(enhanced_lrc))
-                                    set_lyrics(enhanced_lrc, "Musixmatch RichSync (Word-Level Karaoke)")
-                                    return
-                        else:
-                            log.warning("Lrclib Lyrics: [Musixmatch] RichSync body empty for track_id=%s", track_id)
-
-                        # 2. Try Subtitle fallback
-                        log.info("Lrclib Lyrics: [Musixmatch] Trying Subtitle line-sync fallback for track_id=%s...", track_id)
-                        sub_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
-                        sub_res = json.loads(urllib.request.urlopen(urllib.request.Request(sub_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
-                        sub_body = sub_res.get("message", {}).get("body", {}).get("subtitle", {}).get("subtitle_body")
-                        if sub_body and isinstance(sub_body, str) and sub_body.strip():
-                            if not title_is_cjk and _contains_cjk(sub_body):
-                                log.warning("Lrclib Lyrics: [Musixmatch] Subtitle returned CJK for non-CJK track %r, rejecting", cache_key)
+                                        log.info("Lrclib Lyrics: [Musixmatch] RichSync Word-Level Karaoke parsed (%d lines, %d bytes)", len(lrc_lines), len(enhanced_lrc))
+                                        set_lyrics(enhanced_lrc, "Musixmatch RichSync (Word-Level Karaoke)")
+                                        return
                             else:
-                                set_lyrics(sub_body, "Musixmatch Subtitle (Line-Level Sync)")
-                                return
-                        else:
-                            log.warning("Lrclib Lyrics: [Musixmatch] Subtitle body empty for track_id=%s", track_id)
+                                log.warning("Lrclib Lyrics: [Musixmatch] RichSync body empty for track_id=%s", track_id)
+
+                            # 2. Try Subtitle fallback
+                            log.info("Lrclib Lyrics: [Musixmatch] Trying Subtitle line-sync fallback for track_id=%s...", track_id)
+                            sub_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                            sub_res = json.loads(urllib.request.urlopen(urllib.request.Request(sub_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
+                            sub_body = _get_dict_path(sub_res, ["message", "body", "subtitle", "subtitle_body"])
+                            if sub_body and isinstance(sub_body, str) and sub_body.strip():
+                                if not title_is_cjk and _contains_cjk(sub_body):
+                                    log.warning("Lrclib Lyrics: [Musixmatch] Subtitle returned CJK for non-CJK track %r, rejecting", cache_key)
+                                else:
+                                    set_lyrics(sub_body, "Musixmatch Subtitle (Line-Level Sync)")
+                                    return
+                            else:
+                                log.warning("Lrclib Lyrics: [Musixmatch] Subtitle body empty for track_id=%s", track_id)
                 else:
                     log.warning("Lrclib Lyrics: [Musixmatch] Search track yielded 0 results for title=%r, artist=%r", clean_title, clean_artist)
             else:
