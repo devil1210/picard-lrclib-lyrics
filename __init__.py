@@ -116,14 +116,18 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
         synced_lyrics = document.get("syncedLyrics")
         chosen = synced_lyrics or unsynced_lyrics
         if chosen:
-            # If LRCLIB provided word-level timestamps <mm:ss.xxx>, use it immediately
+            # Set LRCLIB lyrics IMMEDIATELY on metadata synchronously
+            lyrics_cache[cache_key] = chosen
+            if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                metadata["lyrics"] = chosen
+            log.info("Lrclib Lyrics: Set LRCLIB lyrics synchronously for %r", cache_key)
+
+            # If LRCLIB already provided word-level timestamps <mm:ss.xxx>, we are done
             if "<" in chosen and ">" in chosen:
-                lyrics_cache[cache_key] = chosen
-                if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                    metadata["lyrics"] = chosen
                 return
-            # Otherwise, try Musixmatch RichSync for word-level timestamps, passing LRCLIB line lyrics as backup
-            log.info("Lrclib Lyrics: LRCLIB returned line lyrics for %r; trying Musixmatch RichSync for word-level sync", cache_key)
+
+            # Try upgrading to Musixmatch RichSync for word-level sync
+            log.info("Lrclib Lyrics: Trying Musixmatch RichSync word-level upgrade for %r", cache_key)
             fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
             return
 
@@ -142,15 +146,20 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                     candidates.append(lyrics)
 
             if candidates:
+                chosen = candidates[0]
+                lyrics_cache[cache_key] = chosen
+                if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                    metadata["lyrics"] = chosen
+                log.info("Lrclib Lyrics: Set LRCLIB search lyrics synchronously for %r", cache_key)
+
                 for lyrics in candidates:
                     if "<" in lyrics and ">" in lyrics:
                         lyrics_cache[cache_key] = lyrics
-                        if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                            metadata["lyrics"] = lyrics
+                        metadata["lyrics"] = lyrics
                         return
-                # Line lyrics backup
+
                 log.debug("Lrclib Lyrics: LRCLIB search yielded line lyrics for %r, trying Musixmatch RichSync", cache_key)
-                fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=candidates[0])
+                fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
                 return
 
         log.debug("Lrclib Lyrics: LRCLIB search yielded no lyrics for %r, trying Musixmatch RichSync", cache_key)
