@@ -233,14 +233,34 @@ def fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache
     t.start()
 
 
+def _update_picard_ui(album):
+    if not album:
+        return
+    if hasattr(album, "update"):
+        try:
+            album.update()
+        except Exception:
+            pass
+    if hasattr(album, "tracks"):
+        for track in album.tracks:
+            if hasattr(track, "update"):
+                try:
+                    track.update()
+                except Exception:
+                    pass
+            if hasattr(track, "files"):
+                for file in track.files:
+                    if hasattr(file, "update"):
+                        try:
+                            file.update()
+                        except Exception:
+                            pass
+
+
 def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
     lyrics_cache[cache_key] = lyrics_text
     metadata["lyrics"] = lyrics_text
-    if album and hasattr(album, "_update_metadata"):
-        try:
-            album._update_metadata()
-        except Exception:
-            pass
+    _update_picard_ui(album)
     log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r", provider_name, cache_key)
 
 
@@ -252,26 +272,24 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
         synced_lyrics = document.get("syncedLyrics")
         chosen = synced_lyrics or unsynced_lyrics
         if chosen:
-            # Set LRCLIB lyrics IMMEDIATELY on metadata synchronously as baseline (Priority #10)
             lyrics_cache[cache_key] = chosen
             if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                 metadata["lyrics"] = chosen
+            _update_picard_ui(album)
             log.info("Lrclib Lyrics: [FOUND #10] LRCLib (Line-Level Sync) set synchronously for %r", cache_key)
 
-            # If LRCLIB already provided word-level timestamps <mm:ss.xxx>, apply Portato converter (Priority #4)
             if "<" in chosen and ">" in chosen:
                 portato = _convert_to_portato(chosen)
                 lyrics_cache[cache_key] = portato
                 metadata["lyrics"] = portato
+                _update_picard_ui(album)
                 log.info("Lrclib Lyrics: [FOUND #4] Better Lyrics Portato (Word-Level Karaoke) applied for %r", cache_key)
                 return
 
-            # Try upgrading to Priority #1 (QQMusic Syllable) or Priority #5 (Musixmatch RichSync Word)
             log.info("Lrclib Lyrics: [UPGRADING] Trying Higher Priority Providers (#1 Syllable / #4 Portato / #5 Musixmatch RichSync) for %r...", cache_key)
             fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
             return
 
-    # Fallback to /api/search or Musixmatch RichSync / YouTube / QQMusic
     search_url = "https://lrclib.net/api/search"
     search_query = f"{clean_title} {clean_artist}".strip()
 
@@ -290,6 +308,7 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                 lyrics_cache[cache_key] = chosen
                 if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                     metadata["lyrics"] = chosen
+                _update_picard_ui(album)
                 log.info("Lrclib Lyrics: [FOUND #10] LRCLib Search (Line-Level Sync) set synchronously for %r", cache_key)
 
                 for lyrics in candidates:
@@ -297,6 +316,7 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                         portato = _convert_to_portato(lyrics)
                         lyrics_cache[cache_key] = portato
                         metadata["lyrics"] = portato
+                        _update_picard_ui(album)
                         log.info("Lrclib Lyrics: [FOUND #4] Better Lyrics Portato (Word-Level Karaoke) applied for %r", cache_key)
                         return
 
@@ -322,19 +342,12 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
 def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None):
     title_is_cjk = _contains_cjk(clean_title)
 
-    def _notify_ui():
-        if album and hasattr(album, "_update_metadata"):
-            try:
-                album._update_metadata()
-            except Exception:
-                pass
-
     def apply_fallback():
         if lrclib_backup:
             lyrics_cache[cache_key] = lrclib_backup
             if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                 metadata["lyrics"] = lrclib_backup
-            _notify_ui()
+            _update_picard_ui(album)
             log.info("Lrclib Lyrics: [APPLIED #10] LRCLib line-synced lyrics for %r", cache_key)
         else:
             log.info("Lrclib Lyrics: [FALLBACK #8] Querying YouTube Captions for %r...", cache_key)
@@ -344,7 +357,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
     def set_lyrics(lyrics_text, provider_name):
         lyrics_cache[cache_key] = lyrics_text
         metadata["lyrics"] = lyrics_text
-        _notify_ui()
+        _update_picard_ui(album)
         log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r", provider_name, cache_key)
 
     def _worker():
