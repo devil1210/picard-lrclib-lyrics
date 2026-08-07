@@ -110,7 +110,7 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
     # will be False even though the song is Japanese.
     title_is_cjk = _contains_cjk(clean_title)
 
-        if document and not error and isinstance(document, dict):
+    if document and not error and isinstance(document, dict):
         unsynced_lyrics = document.get("plainLyrics")
         synced_lyrics = document.get("syncedLyrics")
         chosen = synced_lyrics or unsynced_lyrics
