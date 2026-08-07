@@ -459,6 +459,12 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                 s_res = json.loads(urllib.request.urlopen(urllib.request.Request(search_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
                 track_list = _get_dict_path(s_res, ["message", "body", "track_list"], default=[])
 
+                if not (track_list and isinstance(track_list, list) and len(track_list) > 0):
+                    log.info("Lrclib Lyrics: [Musixmatch] Search with artist yielded 0 results, retrying with title=%r only...", clean_title)
+                    search_url_title_only = f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_track={q_trk}&page_size=3&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                    s_res_title = json.loads(urllib.request.urlopen(urllib.request.Request(search_url_title_only, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
+                    track_list = _get_dict_path(s_res_title, ["message", "body", "track_list"], default=[])
+
                 if track_list and isinstance(track_list, list) and len(track_list) > 0:
                     track_item = track_list[0]
                     if isinstance(track_item, dict):
