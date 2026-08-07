@@ -194,15 +194,16 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
             if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                 metadata["lyrics"] = lrclib_backup
             _notify_ui()
-            log.info("Lrclib Lyrics: Used LRCLIB backup line lyrics for %r", cache_key)
+            log.info("Lrclib Lyrics: [APPLIED BACKUP] LRCLIB line-synced lyrics for %r", cache_key)
         else:
+            log.info("Lrclib Lyrics: [FALLBACK] No Musixmatch or LRCLIB lyrics, searching NetEase for %r...", cache_key)
             fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
 
-    def set_lyrics(lyrics_text):
+    def set_lyrics(lyrics_text, provider_name):
         lyrics_cache[cache_key] = lyrics_text
         metadata["lyrics"] = lyrics_text
         _notify_ui()
-        log.info("Lrclib Lyrics: Successfully updated metadata with Musixmatch RichSync Word-by-Word lyrics for %r", cache_key)
+        log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r", provider_name, cache_key)
 
     def _worker():
         try:
@@ -222,6 +223,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
             tok = tok_res.get("message", {}).get("body", {}).get("user_token")
 
             if tok:
+                log.info("Lrclib Lyrics: [Musixmatch] Token acquired, searching track title=%r, artist=%r...", clean_title, clean_artist)
                 q_art = urllib.parse.quote(clean_artist)
                 q_trk = urllib.parse.quote(clean_title)
                 search_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_artist={q_art}&q_track={q_trk}&page_size=1&usertoken={tok}&app_id=web-desktop-app-v1.0"
@@ -231,6 +233,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                 if track_list and len(track_list) > 0:
                     track_id = track_list[0].get("track", {}).get("track_id")
                     if track_id:
+                        log.info("Lrclib Lyrics: [Musixmatch] Found track_id=%s, fetching RichSync Word-Level Karaoke...", track_id)
                         # 1. Try RichSync (Word-level)
                         rich_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.richsync.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
                         r_res = json.loads(urllib.request.urlopen(urllib.request.Request(rich_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
@@ -258,24 +261,34 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                             enhanced_lrc = "\n".join(lrc_lines)
                             if enhanced_lrc.strip():
                                 if not title_is_cjk and _contains_cjk(enhanced_lrc):
-                                    log.warning("Lrclib Lyrics: Musixmatch RichSync returned CJK for non-CJK track %r, rejecting", cache_key)
+                                    log.warning("Lrclib Lyrics: [Musixmatch] RichSync returned CJK for non-CJK track %r, rejecting", cache_key)
                                 else:
-                                    QTimer.singleShot(0, lambda text=enhanced_lrc: set_lyrics(text))
+                                    log.info("Lrclib Lyrics: [Musixmatch] RichSync Word-Level Karaoke parsed (%d lines, %d bytes)", len(lrc_lines), len(enhanced_lrc))
+                                    QTimer.singleShot(0, lambda text=enhanced_lrc: set_lyrics(text, "Musixmatch RichSync (Word-Level Karaoke)"))
                                     return
+                        else:
+                            log.warning("Lrclib Lyrics: [Musixmatch] RichSync body empty for track_id=%s", track_id)
 
                         # 2. Try Subtitle fallback
+                        log.info("Lrclib Lyrics: [Musixmatch] Trying Subtitle line-sync fallback for track_id=%s...", track_id)
                         sub_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
                         sub_res = json.loads(urllib.request.urlopen(urllib.request.Request(sub_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
                         sub_body = sub_res.get("message", {}).get("body", {}).get("subtitle", {}).get("subtitle_body")
                         if sub_body and isinstance(sub_body, str) and sub_body.strip():
                             if not title_is_cjk and _contains_cjk(sub_body):
-                                log.warning("Lrclib Lyrics: Musixmatch subtitle returned CJK for non-CJK track %r, rejecting", cache_key)
+                                log.warning("Lrclib Lyrics: [Musixmatch] Subtitle returned CJK for non-CJK track %r, rejecting", cache_key)
                             else:
-                                QTimer.singleShot(0, lambda text=sub_body: set_lyrics(text))
+                                QTimer.singleShot(0, lambda text=sub_body: set_lyrics(text, "Musixmatch Subtitle (Line-Level Sync)"))
                                 return
+                        else:
+                            log.warning("Lrclib Lyrics: [Musixmatch] Subtitle body empty for track_id=%s", track_id)
+                else:
+                    log.warning("Lrclib Lyrics: [Musixmatch] Search track yielded 0 results for title=%r, artist=%r", clean_title, clean_artist)
+            else:
+                log.warning("Lrclib Lyrics: [Musixmatch] Failed to acquire user_token")
         except Exception as e:
             import traceback
-            log.warning("Lrclib Lyrics: Musixmatch thread error for %r: %s\n%s", cache_key, e, traceback.format_exc())
+            log.warning("Lrclib Lyrics: [Musixmatch] Error for %r: %s\n%s", cache_key, e, traceback.format_exc())
 
         QTimer.singleShot(0, lambda: apply_fallback())
 
