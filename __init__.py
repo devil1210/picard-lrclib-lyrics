@@ -169,7 +169,6 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
 
 
 def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None):
-    token_url = "https://apic-desktop.musixmatch.com/ws/1.1/token.get"
     title_is_cjk = _contains_cjk(clean_title)
 
     def apply_fallback():
@@ -180,125 +179,85 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
             log.info("Lrclib Lyrics: Used LRCLIB backup line lyrics for %r", cache_key)
         else:
             fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
-    
-    def token_handler(doc, rep, err):
-        if doc and not err and isinstance(doc, dict):
-            tok = doc.get("message", {}).get("body", {}).get("user_token")
+
+    def _worker():
+        try:
+            import urllib.request
+            import urllib.parse
+            import json
+
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            token_url = "https://apic-desktop.musixmatch.com/ws/1.1/token.get?app_id=web-desktop-app-v1.0"
+            req = urllib.request.Request(token_url, headers=headers)
+            tok_res = json.loads(urllib.request.urlopen(req, timeout=6).read().decode("utf-8"))
+            tok = tok_res.get("message", {}).get("body", {}).get("user_token")
+
             if tok:
-                search_url = "https://apic-desktop.musixmatch.com/ws/1.1/track.search"
-                
-                def search_handler(s_doc, s_rep, s_err):
-                    if s_doc and not s_err and isinstance(s_doc, dict):
-                        track_list = s_doc.get("message", {}).get("body", {}).get("track_list", [])
-                        if track_list and len(track_list) > 0:
-                            track_id = track_list[0].get("track", {}).get("track_id")
-                            if track_id:
-                                rich_url = "https://apic-desktop.musixmatch.com/ws/1.1/track.richsync.get"
-                                
-                                def rich_handler(r_doc, r_rep, r_err):
-                                    if r_doc and not r_err and isinstance(r_doc, dict):
-                                        rich_body = r_doc.get("message", {}).get("body", {}).get("richsync", {}).get("richsync_body")
-                                        if rich_body:
-                                            try:
-                                                import json
-                                                lines = json.loads(rich_body)
-                                                lrc_lines = []
-                                                for l in lines:
-                                                    ts = l.get("ts", 0)
-                                                    min_s = int(ts // 60)
-                                                    sec_s = int(ts % 60)
-                                                    ms_s = int((ts % 1) * 1000)
-                                                    line_str = f"[{min_s:02d}:{sec_s:02d}.{ms_s:03d}]"
-                                                    for w in l.get("l", []):
-                                                        c = w.get("c", "")
-                                                        off = w.get("o", 0)
-                                                        word_ts = ts + off
-                                                        w_min = int(word_ts // 60)
-                                                        w_sec = int(word_ts % 60)
-                                                        w_ms = int((word_ts % 1) * 1000)
-                                                        line_str += f"<{w_min:02d}:{w_sec:02d}.{w_ms:03d}>{c}"
-                                                    lrc_lines.append(line_str)
-                                                
-                                                enhanced_lrc = "\n".join(lrc_lines)
-                                                if enhanced_lrc.strip():
-                                                    if not title_is_cjk and _contains_cjk(enhanced_lrc):
-                                                        log.warning("Lrclib Lyrics: Musixmatch RichSync returned CJK for non-CJK track %r, rejecting", cache_key)
-                                                    else:
-                                                        lyrics_cache[cache_key] = enhanced_lrc
-                                                        if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                                                            metadata["lyrics"] = enhanced_lrc
-                                                        log.info("Lrclib Lyrics: Successfully fetched Musixmatch RichSync Word-by-Word lyrics for %r", cache_key)
-                                                        return
-                                            except Exception as ex:
-                                                log.error("Musixmatch RichSync parse error: %s", ex)
+                q_art = urllib.parse.quote(clean_artist)
+                q_trk = urllib.parse.quote(clean_title)
+                search_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_artist={q_art}&q_track={q_trk}&page_size=1&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                s_res = json.loads(urllib.request.urlopen(urllib.request.Request(search_url, headers=headers), timeout=6).read().decode("utf-8"))
+                track_list = s_res.get("message", {}).get("body", {}).get("track_list", [])
 
-                                    sub_url = "https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get"
-                                    
-                                    def sub_handler(sub_doc, sub_rep, sub_err):
-                                        if sub_doc and not sub_err and isinstance(sub_doc, dict):
-                                            sub_body = sub_doc.get("message", {}).get("body", {}).get("subtitle", {}).get("subtitle_body")
-                                            if sub_body and isinstance(sub_body, str) and sub_body.strip():
-                                                if not title_is_cjk and _contains_cjk(sub_body):
-                                                    log.warning("Lrclib Lyrics: Musixmatch subtitle returned CJK for non-CJK track %r, rejecting", cache_key)
-                                                else:
-                                                    lyrics_cache[cache_key] = sub_body
-                                                    if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                                                        metadata["lyrics"] = sub_body
-                                                    log.info("Lrclib Lyrics: Successfully fetched Musixmatch subtitle lyrics for %r", cache_key)
-                                                    return
-                                        apply_fallback()
+                if track_list and len(track_list) > 0:
+                    track_id = track_list[0].get("track", {}).get("track_id")
+                    if track_id:
+                        # 1. Try RichSync (Word-level)
+                        rich_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.richsync.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                        r_res = json.loads(urllib.request.urlopen(urllib.request.Request(rich_url, headers=headers), timeout=6).read().decode("utf-8"))
+                        rich_body = r_res.get("message", {}).get("body", {}).get("richsync", {}).get("richsync_body")
 
-                                    try:
-                                        album.tagger.webservice.get_url(
-                                            method="GET",
-                                            handler=sub_handler,
-                                            parse_response_type='json',
-                                            url=sub_url,
-                                            unencoded_queryargs={"format": "json", "track_id": str(track_id), "usertoken": str(tok), "app_id": "web-desktop-app-v1.0"},
-                                            important=False
-                                        )
-                                    except Exception:
-                                        apply_fallback()
+                        if rich_body:
+                            lines = json.loads(rich_body)
+                            lrc_lines = []
+                            for l in lines:
+                                ts = l.get("ts", 0)
+                                min_s = int(ts // 60)
+                                sec_s = int(ts % 60)
+                                ms_s = int((ts % 1) * 1000)
+                                line_str = f"[{min_s:02d}:{sec_s:02d}.{ms_s:03d}]"
+                                for w in l.get("l", []):
+                                    c = w.get("c", "")
+                                    off = w.get("o", 0)
+                                    word_ts = ts + off
+                                    w_min = int(word_ts // 60)
+                                    w_sec = int(word_ts % 60)
+                                    w_ms = int((word_ts % 1) * 1000)
+                                    line_str += f"<{w_min:02d}:{w_sec:02d}.{w_ms:03d}>{c}"
+                                lrc_lines.append(line_str)
 
-                                try:
-                                    album.tagger.webservice.get_url(
-                                        method="GET",
-                                        handler=rich_handler,
-                                        parse_response_type='json',
-                                        url=rich_url,
-                                        unencoded_queryargs={"format": "json", "track_id": str(track_id), "usertoken": str(tok), "app_id": "web-desktop-app-v1.0"},
-                                        important=False
-                                    )
-                                except Exception:
-                                    apply_fallback()
+                            enhanced_lrc = "\n".join(lrc_lines)
+                            if enhanced_lrc.strip():
+                                if not title_is_cjk and _contains_cjk(enhanced_lrc):
+                                    log.warning("Lrclib Lyrics: Musixmatch RichSync returned CJK for non-CJK track %r, rejecting", cache_key)
+                                else:
+                                    lyrics_cache[cache_key] = enhanced_lrc
+                                    if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                                        metadata["lyrics"] = enhanced_lrc
+                                    log.info("Lrclib Lyrics: Successfully fetched Musixmatch RichSync Word-by-Word lyrics for %r", cache_key)
+                                    return
+
+                        # 2. Try Subtitle fallback
+                        sub_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                        sub_res = json.loads(urllib.request.urlopen(urllib.request.Request(sub_url, headers=headers), timeout=6).read().decode("utf-8"))
+                        sub_body = sub_res.get("message", {}).get("body", {}).get("subtitle", {}).get("subtitle_body")
+                        if sub_body and isinstance(sub_body, str) and sub_body.strip():
+                            if not title_is_cjk and _contains_cjk(sub_body):
+                                log.warning("Lrclib Lyrics: Musixmatch subtitle returned CJK for non-CJK track %r, rejecting", cache_key)
+                            else:
+                                lyrics_cache[cache_key] = sub_body
+                                if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                                    metadata["lyrics"] = sub_body
+                                log.info("Lrclib Lyrics: Successfully fetched Musixmatch subtitle lyrics for %r", cache_key)
                                 return
-                    apply_fallback()
+        except Exception as e:
+            log.warning("Lrclib Lyrics: Musixmatch thread error for %r: %s", cache_key, e)
 
-                try:
-                    album.tagger.webservice.get_url(
-                        method="GET",
-                        handler=search_handler,
-                        parse_response_type='json',
-                        url=search_url,
-                        unencoded_queryargs={"format": "json", "q_artist": clean_artist, "q_track": clean_title, "page_size": "1", "usertoken": str(tok), "app_id": "web-desktop-app-v1.0"},
-                        important=False
-                    )
-                    return
-                except Exception:
-                    apply_fallback()
         apply_fallback()
 
-    try:
-        album.tagger.webservice.get_url(
-            method="GET",
-            handler=token_handler,
-            parse_response_type='json',
-            url=token_url,
-            unencoded_queryargs={"app_id": "web-desktop-app-v1.0"},
-            important=False
-        )
-    except Exception:
-        apply_fallback()
+    t = threading.Thread(target=_worker)
+    t.daemon = True
+    t.start()
 
 
 def fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None):
