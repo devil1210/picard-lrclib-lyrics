@@ -5,6 +5,7 @@
 
 import os
 import re
+import threading
 from functools import partial
 from PyQt6.QtCore import QTimer
 
