@@ -339,6 +339,30 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
         fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
 
 
+_cached_musixmatch_token = None
+_token_lock = threading.Lock()
+
+def _get_musixmatch_token(headers, ctx):
+    global _cached_musixmatch_token
+    if _cached_musixmatch_token:
+        return _cached_musixmatch_token
+    with _token_lock:
+        if _cached_musixmatch_token:
+            return _cached_musixmatch_token
+        try:
+            token_url = "https://apic-desktop.musixmatch.com/ws/1.1/token.get?app_id=web-desktop-app-v1.0"
+            req = urllib.request.Request(token_url, headers=headers)
+            tok_res = json.loads(urllib.request.urlopen(req, timeout=6, context=ctx).read().decode("utf-8"))
+            tok = tok_res.get("message", {}).get("body", {}).get("user_token")
+            if tok:
+                _cached_musixmatch_token = tok
+                log.info("Lrclib Lyrics: [Musixmatch] Acquired and cached global user_token: %s", tok)
+                return tok
+        except Exception as e:
+            log.warning("Lrclib Lyrics: [Musixmatch] Token fetch error: %s", e)
+    return None
+
+
 def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None):
     title_is_cjk = _contains_cjk(clean_title)
 
@@ -372,13 +396,10 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
             ctx.verify_mode = ssl.CERT_NONE
 
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            token_url = "https://apic-desktop.musixmatch.com/ws/1.1/token.get?app_id=web-desktop-app-v1.0"
-            req = urllib.request.Request(token_url, headers=headers)
-            tok_res = json.loads(urllib.request.urlopen(req, timeout=6, context=ctx).read().decode("utf-8"))
-            tok = tok_res.get("message", {}).get("body", {}).get("user_token")
+            tok = _get_musixmatch_token(headers, ctx)
 
             if tok:
-                log.info("Lrclib Lyrics: [Musixmatch] Token acquired, searching track title=%r, artist=%r...", clean_title, clean_artist)
+                log.info("Lrclib Lyrics: [Musixmatch] Using token, searching track title=%r, artist=%r...", clean_title, clean_artist)
                 q_art = urllib.parse.quote(clean_artist)
                 q_trk = urllib.parse.quote(clean_title)
                 search_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_artist={q_art}&q_track={q_trk}&page_size=1&usertoken={tok}&app_id=web-desktop-app-v1.0"
