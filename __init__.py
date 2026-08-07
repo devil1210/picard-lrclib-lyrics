@@ -405,10 +405,10 @@ class LrclibLyricsOptions(OptionsPage):
         from PyQt6 import QtWidgets
 
         self.cb_unsynced = QtWidgets.QCheckBox("Download and embed unsynced lyrics", self)
-        self.cb_synced = QtWidgets.QCheckBox("Download and embed synced lyrics", self)
+        self.cb_synced = QtWidgets.QCheckBox("Download and embed synced lyrics (Karaoke / Timestamped LRC)", self)
         self.cb_never_replace = QtWidgets.QCheckBox("Never replace any embedded lyrics if already present", self)
-        self.cb_export_lrc = QtWidgets.QCheckBox("Export lyrics to lrc file when saving (priority to synced lyrics)", self)
-        self.cb_sidecar = QtWidgets.QCheckBox("Save the LRC file as a sidecar file to the audio file", self)
+        self.cb_export_lrc = QtWidgets.QCheckBox("Export lyrics to .lrc file when saving (priority to synced Karaoke lyrics)", self)
+        self.cb_sidecar = QtWidgets.QCheckBox("Save the LRC file as a sidecar file to the audio file (for Navidrome & Feishin)", self)
         self.cb_never_replace_lrc = QtWidgets.QCheckBox("Never replace lrc files if already present", self)
 
         vbox = QtWidgets.QVBoxLayout(self)
