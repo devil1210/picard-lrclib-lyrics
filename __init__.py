@@ -181,6 +181,12 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
         else:
             fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
 
+    def set_lyrics(lyrics_text):
+        lyrics_cache[cache_key] = lyrics_text
+        if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+            metadata["lyrics"] = lyrics_text
+        log.info("Lrclib Lyrics: Successfully updated metadata with Musixmatch RichSync Word-by-Word lyrics for %r", cache_key)
+
     def _worker():
         try:
             import urllib.request
@@ -232,10 +238,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                                 if not title_is_cjk and _contains_cjk(enhanced_lrc):
                                     log.warning("Lrclib Lyrics: Musixmatch RichSync returned CJK for non-CJK track %r, rejecting", cache_key)
                                 else:
-                                    lyrics_cache[cache_key] = enhanced_lrc
-                                    if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                                        metadata["lyrics"] = enhanced_lrc
-                                    log.info("Lrclib Lyrics: Successfully fetched Musixmatch RichSync Word-by-Word lyrics for %r", cache_key)
+                                    QTimer.singleShot(0, lambda text=enhanced_lrc: set_lyrics(text))
                                     return
 
                         # 2. Try Subtitle fallback
@@ -246,15 +249,12 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                             if not title_is_cjk and _contains_cjk(sub_body):
                                 log.warning("Lrclib Lyrics: Musixmatch subtitle returned CJK for non-CJK track %r, rejecting", cache_key)
                             else:
-                                lyrics_cache[cache_key] = sub_body
-                                if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                                    metadata["lyrics"] = sub_body
-                                log.info("Lrclib Lyrics: Successfully fetched Musixmatch subtitle lyrics for %r", cache_key)
+                                QTimer.singleShot(0, lambda text=sub_body: set_lyrics(text))
                                 return
         except Exception as e:
             log.warning("Lrclib Lyrics: Musixmatch thread error for %r: %s", cache_key, e)
 
-        apply_fallback()
+        QTimer.singleShot(0, lambda: apply_fallback())
 
     t = threading.Thread(target=_worker)
     t.daemon = True
