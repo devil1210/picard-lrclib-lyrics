@@ -80,23 +80,28 @@ def _contains_cjk(text: str) -> bool:
 
 
 def _clean_title_for_query(title: str) -> str:
-    """Extract primary title without dual-language romaji suffix or trailing feat."""
+    """Extract primary title without dual-language romaji suffix, version brackets, or trailing feat."""
     if not title:
         return ""
-    parts = re.split(r'\s+[\-\–\—]\s+', title)
-    clean = parts[0].strip()
-    return clean
+    # Strip bracketed version tags like [Remastered 2021] or (TV Size)
+    clean = re.sub(r'[\(\[]\s*(?:remaster(?:ed)?|live|tv size|bonus track|official video|version|edit|acoustic).+?[\)\]]', '', title, flags=re.IGNORECASE)
+    clean = clean.strip()
+    if not clean:
+        clean = title
+    parts = re.split(r'\s+[\-\–\—]\s+', clean)
+    return parts[0].strip()
 
 
 def _clean_artist_for_query(artist: str) -> str:
     """Extract primary artist before separators like commas, ' y ', ' & ', ' feat.', etc."""
     if not artist:
         return ""
-    for sep in [",", " y ", " & ", " feat.", " ft.", " presenting", " (feat"]:
+    for sep in [",", " y ", " & ", " feat.", " ft.", " presenting", " (feat", " featuring"]:
         if sep in artist.lower():
             idx = artist.lower().find(sep)
             artist = artist[:idx]
     return artist.strip()
+
 
 
 def response_handler(album, metadata, clean_title, clean_artist, cache_key, document, reply, error):
@@ -312,6 +317,84 @@ class ImportLrc(BaseAction):
         pass
 
 
+class PublishToLrclibAction(BaseAction):
+    NAME = "Publish / Submit lyrics to LRCLIB"
+
+    def callback(self, objs):
+        import hashlib
+        import json
+        from urllib.request import Request, urlopen
+
+        for obj in objs:
+            metadata = getattr(obj, "metadata", None)
+            if not metadata:
+                continue
+            title = metadata.get("title")
+            artist = metadata.get("artist")
+            album = metadata.get("album", "")
+            lyrics = metadata.get("lyrics")
+
+            if not (title and artist and lyrics):
+                log.warning("Lrclib Publish: Missing title, artist, or lyrics for %r", obj)
+                continue
+
+            duration = 0
+            if hasattr(obj, "length") and obj.length:
+                duration = int(obj.length / 1000)
+
+            try:
+                # 1. Request PoW Challenge
+                req = Request("https://lrclib.net/api/request-challenge", method="POST")
+                with urlopen(req, timeout=10) as resp:
+                    challenge = json.loads(resp.read().decode("utf-8"))
+
+                prefix = challenge.get("prefix", "")
+                target = challenge.get("target", "")
+
+                # 2. Solve PoW
+                nonce = 0
+                token = ""
+                while nonce < 2000000:
+                    h = hashlib.sha256(f"{prefix}{nonce}".encode("utf-8")).hexdigest()
+                    if h == target or h.startswith(target) or h.endswith(target):
+                        token = f"{prefix}:{nonce}"
+                        break
+                    nonce += 1
+
+                if not token:
+                    token = f"{prefix}:{nonce}"
+
+                # 3. Publish Lyrics
+                payload = {
+                    "trackName": title,
+                    "artistName": artist,
+                    "albumName": album,
+                    "duration": duration,
+                }
+                if synced_lyrics_pattern.search(lyrics):
+                    payload["syncedLyrics"] = lyrics
+                else:
+                    payload["plainLyrics"] = lyrics
+
+                pub_req = Request(
+                    "https://lrclib.net/api/publish",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Publish-Token": token,
+                        "User-Agent": "Picard-Lrclib-Plugin/1.0",
+                    },
+                    method="POST",
+                )
+                with urlopen(pub_req, timeout=10) as pub_resp:
+                    if pub_resp.status in (200, 201):
+                        log.info("Lrclib Publish: Successfully published lyrics for %s - %s", artist, title)
+                    else:
+                        log.warning("Lrclib Publish: Received status %d for %s - %s", pub_resp.status, artist, title)
+            except Exception as e:
+                log.error("Lrclib Publish Error for %s - %s: %s", artist, title, e)
+
+
 class LrclibLyricsOptions(OptionsPage):
     NAME = "lrclib_lyrics"
     TITLE = "Lrclib Lyrics"
@@ -371,4 +454,6 @@ def enable(api: PluginApi):
     api.register_file_post_addition_to_track_processor(get_lyrics)
     api.register_file_post_save_processor(export_lrc_file)
     api.register_track_action(ImportLrc)
+    api.register_track_action(PublishToLrclibAction)
+    api.register_file_action(PublishToLrclibAction)
     api.register_options_page(LrclibLyricsOptions)
