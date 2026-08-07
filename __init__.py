@@ -579,6 +579,31 @@ class LrclibLyricsOptions(OptionsPage):
         self.api.plugin_config[NEVER_REPLACE_LRC] = self.cb_never_replace_lrc.isChecked()
 
 
+class FetchLyricsAction(BaseAction):
+    NAME = "Fetch / Refresh Lyrics (Word Sync Karaoke)"
+
+    def callback(self, objs):
+        for obj in objs:
+            files = []
+            if hasattr(obj, "files"):
+                files = obj.files
+            elif hasattr(obj, "metadata") and hasattr(obj, "filename"):
+                files = [obj]
+
+            for file in files:
+                track = getattr(file, "track", None) or obj
+                clean_title = _clean_title_for_query(_clean_str(file.metadata.get("title")))
+                clean_artist = _clean_artist_for_query(_clean_str(file.metadata.get("artist")))
+                if clean_title and clean_artist:
+                    cache_key = (clean_title.lower().strip(), clean_artist.lower().strip())
+                    lyrics_cache.pop(cache_key, None)
+                    failed_lyrics_cache.discard(cache_key)
+                    pending_fetches.discard(cache_key)
+                    # Clear existing line lyrics to force fresh word-sync fetch
+                    file.metadata.pop("lyrics", None)
+                    get_lyrics(track, file)
+
+
 def enable(api: PluginApi):
     global _api
     _api = api
@@ -594,7 +619,10 @@ def enable(api: PluginApi):
         except Exception:
             pass
     api.register_file_post_addition_to_track_processor(get_lyrics)
+    api.register_track_metadata_processor(get_lyrics)
     api.register_file_post_save_processor(export_lrc_file)
+    api.register_track_action(FetchLyricsAction)
+    api.register_file_action(FetchLyricsAction)
     api.register_track_action(ImportLrc)
     api.register_track_action(PublishToLrclibAction)
     api.register_file_action(PublishToLrclibAction)
