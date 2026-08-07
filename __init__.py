@@ -110,44 +110,28 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
     # will be False even though the song is Japanese.
     title_is_cjk = _contains_cjk(clean_title)
 
-    if document and not error and isinstance(document, dict):
+        if document and not error and isinstance(document, dict):
         unsynced_lyrics = document.get("plainLyrics")
         synced_lyrics = document.get("syncedLyrics")
         chosen = synced_lyrics or unsynced_lyrics
         if chosen:
-            # If title is Latin-script AND the returned lyrics are CJK, skip
-            # and fall through to search so we can find a Latin/romaji version.
-            # (A Spanish song should not get Korean lyrics; a Japanese song
-            # written in romaji WILL still get Japanese lyrics if no romaji
-            # version exists — see two-pass logic in search_handler below.)
-            if not title_is_cjk and _contains_cjk(chosen):
-                log.debug(
-                    "Lrclib Lyrics: /api/get returned CJK lyrics for Latin-title track %r, trying search",
-                    cache_key,
-                )
-            else:
+            # If LRCLIB provided word-level timestamps <mm:ss.xxx>, use it immediately
+            if "<" in chosen and ">" in chosen:
                 lyrics_cache[cache_key] = chosen
                 if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                     metadata["lyrics"] = chosen
                 return
+            # Otherwise, try Musixmatch RichSync for word-level timestamps
+            log.info("Lrclib Lyrics: LRCLIB returned line lyrics for %r; trying Musixmatch RichSync for word-level sync", cache_key)
+            fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+            return
 
-    # Fallback to /api/search
+    # Fallback to /api/search or Musixmatch RichSync
     search_url = "https://lrclib.net/api/search"
     search_query = f"{clean_title} {clean_artist}".strip()
 
     def search_handler(doc, rep, err):
         if doc and not err and isinstance(doc, list):
-            # Two-pass selection:
-            #  Pass 1 – prefer lyrics whose script matches the title script.
-            #    • Latin title  → prefer non-CJK lyrics first.
-            #    • CJK title    → prefer CJK lyrics first.
-            #  Pass 2 – accept anything that has lyrics.
-            #
-            # This correctly handles:
-            #   ✓ "Un regalo mágico" (Spanish) → skips Korean translation, picks Spanish.
-            #   ✓ "Renai Circulation" (romaji) → no Latin lyrics exist, accepts Japanese.
-            #   ✓ "紅蓮華" (kanji title)        → CJK lyrics accepted directly.
-
             candidates = []
             for item in doc:
                 if not isinstance(item, dict):
@@ -157,24 +141,15 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                     candidates.append(lyrics)
 
             if candidates:
-                # Pass 1: prefer matching script
                 for lyrics in candidates:
-                    lyrics_is_cjk = _contains_cjk(lyrics)
-                    if title_is_cjk == lyrics_is_cjk:
+                    if "<" in lyrics and ">" in lyrics:
                         lyrics_cache[cache_key] = lyrics
                         if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                             metadata["lyrics"] = lyrics
                         return
 
-                # Pass 2: accept best available regardless of script
-                lyrics = candidates[0]
-                lyrics_cache[cache_key] = lyrics
-                if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                    metadata["lyrics"] = lyrics
-                return
-
-        log.debug("Lrclib Lyrics: LRCLIB search yielded no lyrics for %r, falling back to NetEase", cache_key)
-        fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+        log.debug("Lrclib Lyrics: LRCLIB search yielded no word-synced lyrics for %r, trying Musixmatch RichSync", cache_key)
+        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key)
 
     try:
         album.tagger.webservice.get_url(
@@ -183,6 +158,108 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
             parse_response_type='json',
             url=search_url,
             unencoded_queryargs={"q": search_query},
+            important=False
+        )
+    except Exception:
+        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+
+
+def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key):
+    token_url = "https://apic-desktop.musixmatch.com/ws/1.1/token.get?app_id=web-desktop-app-v1.0"
+    
+    def token_handler(doc, rep, err):
+        if doc and not err and isinstance(doc, dict):
+            tok = doc.get("message", {}).get("body", {}).get("user_token")
+            if tok:
+                search_url = "https://apic-desktop.musixmatch.com/ws/1.1/track.search"
+                
+                def search_handler(s_doc, s_rep, s_err):
+                    if s_doc and not s_err and isinstance(s_doc, dict):
+                        track_list = s_doc.get("message", {}).get("body", {}).get("track_list", [])
+                        if track_list and len(track_list) > 0:
+                            track_id = track_list[0].get("track", {}).get("track_id")
+                            if track_id:
+                                rich_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.richsync.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                                
+                                def rich_handler(r_doc, r_rep, r_err):
+                                    if r_doc and not r_err and isinstance(r_doc, dict):
+                                        rich_body = r_doc.get("message", {}).get("body", {}).get("richsync", {}).get("richsync_body")
+                                        if rich_body:
+                                            try:
+                                                import json
+                                                lines = json.loads(rich_body)
+                                                lrc_lines = []
+                                                for l in lines:
+                                                    ts = l.get("ts", 0)
+                                                    min_s = int(ts // 60)
+                                                    sec_s = int(ts % 60)
+                                                    ms_s = int((ts % 1) * 1000)
+                                                    line_str = f"[{min_s:02d}:{sec_s:02d}.{ms_s:03d}]"
+                                                    for w in l.get("l", []):
+                                                        c = w.get("c", "")
+                                                        off = w.get("o", 0)
+                                                        word_ts = ts + off
+                                                        w_min = int(word_ts // 60)
+                                                        w_sec = int(word_ts % 60)
+                                                        w_ms = int((word_ts % 1) * 1000)
+                                                        line_str += f"<{w_min:02d}:{w_sec:02d}.{w_ms:03d}>{c}"
+                                                    lrc_lines.append(line_str)
+                                                
+                                                enhanced_lrc = "\n".join(lrc_lines)
+                                                if enhanced_lrc.strip():
+                                                    lyrics_cache[cache_key] = enhanced_lrc
+                                                    if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                                                        metadata["lyrics"] = enhanced_lrc
+                                                    log.info("Lrclib Lyrics: Successfully fetched Musixmatch RichSync Word-by-Word lyrics for %r", cache_key)
+                                                    return
+                                            except Exception as ex:
+                                                log.error("Musixmatch RichSync parse error: %s", ex)
+
+                                    sub_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                                    
+                                    def sub_handler(sub_doc, sub_rep, sub_err):
+                                        if sub_doc and not sub_err and isinstance(sub_doc, dict):
+                                            sub_body = sub_doc.get("message", {}).get("body", {}).get("subtitle", {}).get("subtitle_body")
+                                            if sub_body and isinstance(sub_body, str) and sub_body.strip():
+                                                lyrics_cache[cache_key] = sub_body
+                                                if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
+                                                    metadata["lyrics"] = sub_body
+                                                log.info("Lrclib Lyrics: Successfully fetched Musixmatch subtitle lyrics for %r", cache_key)
+                                                return
+                                        fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+
+                                    try:
+                                        album.tagger.webservice.get_url(method="GET", handler=sub_handler, parse_response_type='json', url=sub_url, important=False)
+                                    except Exception:
+                                        fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+
+                                try:
+                                    album.tagger.webservice.get_url(method="GET", handler=rich_handler, parse_response_type='json', url=rich_url, important=False)
+                                except Exception:
+                                    fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+                                return
+                    fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+
+                try:
+                    album.tagger.webservice.get_url(
+                        method="GET",
+                        handler=search_handler,
+                        parse_response_type='json',
+                        url=search_url,
+                        unencoded_queryargs={"q_artist": clean_artist, "q_track": clean_title, "page_size": 1, "usertoken": tok, "app_id": "web-desktop-app-v1.0"},
+                        important=False
+                    )
+                    return
+                except Exception:
+                    fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+        fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+
+    try:
+        album.tagger.webservice.get_url(
+            method="GET",
+            handler=token_handler,
+            parse_response_type='json',
+            url=token_url,
             important=False
         )
     except Exception:
