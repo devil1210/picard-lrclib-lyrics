@@ -180,13 +180,13 @@ def fetch_youtube_captions(album, metadata, clean_title, clean_artist, cache_key
                     if lrc_lines:
                         yt_lrc = "\n".join(lrc_lines)
                         log.info("Lrclib Lyrics: [SUCCESS #8] YouTube Captions Line-Sync fetched for %r (%d lines)", cache_key, len(lrc_lines))
-                        QTimer.singleShot(0, lambda text=yt_lrc: _apply_lyrics(album, metadata, cache_key, text, "YouTube Captions (Line-Level Sync)"))
+                        _apply_lyrics(album, metadata, cache_key, yt_lrc, "YouTube Captions (Line-Level Sync)")
                         return
         except Exception as e:
             log.debug("Lrclib Lyrics: [YouTube Captions] Error for %r: %s", cache_key, e)
 
         if fallback_fn:
-            QTimer.singleShot(0, lambda: fallback_fn())
+            fallback_fn()
 
     t = threading.Thread(target=_worker)
     t.daemon = True
@@ -224,13 +224,13 @@ def fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache
                     lyric = l_res.get("lyric", "")
                     if lyric and isinstance(lyric, str) and lyric.strip():
                         log.info("Lrclib Lyrics: [SUCCESS #1] QQMusic Syllable/Line Karaoke fetched for %r", cache_key)
-                        QTimer.singleShot(0, lambda text=lyric: _apply_lyrics(album, metadata, cache_key, text, "QQMusic / Better Lyrics Syllable"))
+                        _apply_lyrics(album, metadata, cache_key, lyric, "QQMusic / Better Lyrics Syllable")
                         return
         except Exception as e:
             log.debug("Lrclib Lyrics: [QQMusic/Kugou] Error for %r: %s", cache_key, e)
 
         if fallback_fn:
-            QTimer.singleShot(0, lambda: fallback_fn())
+            fallback_fn()
 
     t = threading.Thread(target=_worker)
     t.daemon = True
@@ -500,7 +500,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                                     log.warning("Lrclib Lyrics: [Musixmatch] RichSync returned CJK for non-CJK track %r, rejecting", cache_key)
                                 else:
                                     log.info("Lrclib Lyrics: [Musixmatch] RichSync Word-Level Karaoke parsed (%d lines, %d bytes)", len(lrc_lines), len(enhanced_lrc))
-                                    QTimer.singleShot(0, lambda text=enhanced_lrc: set_lyrics(text, "Musixmatch RichSync (Word-Level Karaoke)"))
+                                    set_lyrics(enhanced_lrc, "Musixmatch RichSync (Word-Level Karaoke)")
                                     return
                         else:
                             log.warning("Lrclib Lyrics: [Musixmatch] RichSync body empty for track_id=%s", track_id)
@@ -514,7 +514,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                             if not title_is_cjk and _contains_cjk(sub_body):
                                 log.warning("Lrclib Lyrics: [Musixmatch] Subtitle returned CJK for non-CJK track %r, rejecting", cache_key)
                             else:
-                                QTimer.singleShot(0, lambda text=sub_body: set_lyrics(text, "Musixmatch Subtitle (Line-Level Sync)"))
+                                set_lyrics(sub_body, "Musixmatch Subtitle (Line-Level Sync)")
                                 return
                         else:
                             log.warning("Lrclib Lyrics: [Musixmatch] Subtitle body empty for track_id=%s", track_id)
@@ -526,7 +526,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
             import traceback
             log.warning("Lrclib Lyrics: [Musixmatch] Error for %r: %s\n%s", cache_key, e, traceback.format_exc())
 
-        QTimer.singleShot(0, lambda: apply_fallback())
+        apply_fallback()
 
     t = threading.Thread(target=_worker)
     t.daemon = True
