@@ -556,6 +556,48 @@ class PublishToLrclibAction(BaseAction):
                 log.error("Lrclib Publish Error for %s - %s: %s", artist, title, e)
 
 
+class LrclibLyricsOptions(OptionsPage):
+    NAME = "lrclib_lyrics"
+    TITLE = "Lrclib Lyrics"
+    PARENT = "plugins"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PyQt6 import QtWidgets
+
+        self.cb_unsynced = QtWidgets.QCheckBox("Download and embed unsynced lyrics", self)
+        self.cb_synced = QtWidgets.QCheckBox("Download and embed synced lyrics (Karaoke / Timestamped LRC)", self)
+        self.cb_never_replace = QtWidgets.QCheckBox("Never replace any embedded lyrics if already present", self)
+        self.cb_export_lrc = QtWidgets.QCheckBox("Export lyrics to .lrc file when saving (priority to synced Karaoke lyrics)", self)
+        self.cb_sidecar = QtWidgets.QCheckBox("Save the LRC file as a sidecar file to the audio file (for Navidrome & Feishin)", self)
+        self.cb_never_replace_lrc = QtWidgets.QCheckBox("Never replace lrc files if already present", self)
+
+        vbox = QtWidgets.QVBoxLayout(self)
+        vbox.addWidget(self.cb_unsynced)
+        vbox.addWidget(self.cb_synced)
+        vbox.addWidget(self.cb_never_replace)
+        vbox.addWidget(self.cb_export_lrc)
+        vbox.addWidget(self.cb_sidecar)
+        vbox.addWidget(self.cb_never_replace_lrc)
+        vbox.addStretch()
+
+    def load(self):
+        self.cb_unsynced.setChecked(bool(self.api.plugin_config[ADD_UNSYNCED_LYRICS]))
+        self.cb_synced.setChecked(bool(self.api.plugin_config[ADD_SYNCED_LYRICS]))
+        self.cb_never_replace.setChecked(bool(self.api.plugin_config[NEVER_REPLACE_LYRICS]))
+        self.cb_export_lrc.setChecked(bool(self.api.plugin_config[EXPORT_LRC]))
+        self.cb_sidecar.setChecked(bool(self.api.plugin_config[LRC_AS_SIDECAR]))
+        self.cb_never_replace_lrc.setChecked(bool(self.api.plugin_config[NEVER_REPLACE_LRC]))
+
+    def save(self):
+        self.api.plugin_config[ADD_UNSYNCED_LYRICS] = self.cb_unsynced.isChecked()
+        self.api.plugin_config[ADD_SYNCED_LYRICS] = self.cb_synced.isChecked()
+        self.api.plugin_config[NEVER_REPLACE_LYRICS] = self.cb_never_replace.isChecked()
+        self.api.plugin_config[EXPORT_LRC] = self.cb_export_lrc.isChecked()
+        self.api.plugin_config[LRC_AS_SIDECAR] = self.cb_sidecar.isChecked()
+        self.api.plugin_config[NEVER_REPLACE_LRC] = self.cb_never_replace_lrc.isChecked()
+
+
 def enable(api: PluginApi):
     global _api
     _api = api
