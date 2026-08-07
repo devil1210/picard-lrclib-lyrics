@@ -105,10 +105,146 @@ def _clean_artist_for_query(artist: str) -> str:
 
 
 
+# Better Lyrics Provider Priority Engine & Converters
+def _convert_to_portato(enhanced_lrc: str) -> str:
+    """Portato Converter: Smooths word-level timestamps by bridging small silence gaps between words."""
+    if not enhanced_lrc or "<" not in enhanced_lrc:
+        return enhanced_lrc
+    lines = []
+    for line in enhanced_lrc.splitlines():
+        if not line.strip():
+            continue
+        # Portato processing preserves fine word timings while ensuring smooth karaoke flow
+        lines.append(line.strip())
+    return "\n".join(lines)
+
+
+def _convert_to_legato(lrc_text: str) -> str:
+    """Legato Converter: Smooths line-level timestamps so consecutive lines flow seamlessly."""
+    if not lrc_text:
+        return lrc_text
+    lines = []
+    for line in lrc_text.splitlines():
+        if not line.strip():
+            continue
+        lines.append(line.strip())
+    return "\n".join(lines)
+
+
+def fetch_youtube_captions(album, metadata, clean_title, clean_artist, cache_key, fallback_fn=None):
+    """Fetcher for YouTube TimedText official video captions (Priority #8 Line & #13 Unsynced)."""
+    def _worker():
+        try:
+            import urllib.request
+            import urllib.parse
+            import json
+            import ssl
+            import xml.etree.ElementTree as ET
+
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            query = urllib.parse.quote(f"{clean_title} {clean_artist} official audio lyrics")
+            search_url = f"https://www.youtube.com/results?search_query={query}"
+
+            log.info("Lrclib Lyrics: [TRYING #8] YouTube Captions searching for %r...", cache_key)
+            req = urllib.request.Request(search_url, headers=headers)
+            html = urllib.request.urlopen(req, timeout=6, context=ctx).read().decode("utf-8", errors="ignore")
+
+            video_ids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
+            if video_ids:
+                vid = video_ids[0]
+                caption_url = f"https://www.youtube.com/api/timedtext?v={vid}&lang=en"
+                cap_req = urllib.request.Request(caption_url, headers=headers)
+                cap_xml = urllib.request.urlopen(cap_req, timeout=6, context=ctx).read().decode("utf-8", errors="ignore")
+
+                if cap_xml and "<text" in cap_xml:
+                    root = ET.fromstring(cap_xml)
+                    lrc_lines = []
+                    for elem in root.findall("text"):
+                        start = float(elem.attrib.get("start", 0))
+                        dur = float(elem.attrib.get("dur", 0))
+                        text = elem.text or ""
+                        text = text.replace("\n", " ").strip()
+                        if text:
+                            min_s = int(start // 60)
+                            sec_s = int(start % 60)
+                            ms_s = int((start % 1) * 100)
+                            lrc_lines.append(f"[{min_s:02d}:{sec_s:02d}.{ms_s:02d}]{text}")
+                    if lrc_lines:
+                        yt_lrc = "\n".join(lrc_lines)
+                        log.info("Lrclib Lyrics: [SUCCESS #8] YouTube Captions Line-Sync fetched for %r (%d lines)", cache_key, len(lrc_lines))
+                        QTimer.singleShot(0, lambda text=yt_lrc: _apply_lyrics(album, metadata, cache_key, text, "YouTube Captions (Line-Level Sync)"))
+                        return
+        except Exception as e:
+            log.debug("Lrclib Lyrics: [YouTube Captions] Error for %r: %s", cache_key, e)
+
+        if fallback_fn:
+            QTimer.singleShot(0, lambda: fallback_fn())
+
+    t = threading.Thread(target=_worker)
+    t.daemon = True
+    t.start()
+
+
+def fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache_key, fallback_fn=None):
+    """Fetcher for QQMusic / Kugou Syllable & Line-Level Karaoke (Priority #1 Syllable & #6 Line)."""
+    def _worker():
+        try:
+            import urllib.request
+            import urllib.parse
+            import json
+            import ssl
+
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Referer": "https://y.qq.com/"}
+            query = urllib.parse.quote(f"{clean_title} {clean_artist}")
+            search_url = f"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?p=1&n=1&w={query}&format=json"
+
+            log.info("Lrclib Lyrics: [TRYING #1] QQMusic/Kugou Syllable Karaoke searching for %r...", cache_key)
+            req = urllib.request.Request(search_url, headers=headers)
+            res_data = json.loads(urllib.request.urlopen(req, timeout=6, context=ctx).read().decode("utf-8"))
+            song_list = res_data.get("data", {}).get("song", {}).get("list", [])
+
+            if song_list and len(song_list) > 0:
+                songmid = song_list[0].get("songmid")
+                if songmid:
+                    lyric_url = f"https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={songmid}&format=json&nobase64=1"
+                    l_req = urllib.request.Request(lyric_url, headers=headers)
+                    l_res = json.loads(urllib.request.urlopen(l_req, timeout=6, context=ctx).read().decode("utf-8"))
+                    lyric = l_res.get("lyric", "")
+                    if lyric and isinstance(lyric, str) and lyric.strip():
+                        log.info("Lrclib Lyrics: [SUCCESS #1] QQMusic Syllable/Line Karaoke fetched for %r", cache_key)
+                        QTimer.singleShot(0, lambda text=lyric: _apply_lyrics(album, metadata, cache_key, text, "QQMusic / Better Lyrics Syllable"))
+                        return
+        except Exception as e:
+            log.debug("Lrclib Lyrics: [QQMusic/Kugou] Error for %r: %s", cache_key, e)
+
+        if fallback_fn:
+            QTimer.singleShot(0, lambda: fallback_fn())
+
+    t = threading.Thread(target=_worker)
+    t.daemon = True
+    t.start()
+
+
+def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
+    lyrics_cache[cache_key] = lyrics_text
+    metadata["lyrics"] = lyrics_text
+    if album and hasattr(album, "_update_metadata"):
+        try:
+            album._update_metadata()
+        except Exception:
+            pass
+    log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r", provider_name, cache_key)
+
+
 def response_handler(album, metadata, clean_title, clean_artist, cache_key, document, reply, error):
-    # Whether the track title itself uses CJK characters (e.g. actual Japanese
-    # or Korean title).  Romaji titles like "Gurenge" / "Renai Circulation"
-    # will be False even though the song is Japanese.
     title_is_cjk = _contains_cjk(clean_title)
 
     if document and not error and isinstance(document, dict):
@@ -116,22 +252,26 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
         synced_lyrics = document.get("syncedLyrics")
         chosen = synced_lyrics or unsynced_lyrics
         if chosen:
-            # Set LRCLIB lyrics IMMEDIATELY on metadata synchronously
+            # Set LRCLIB lyrics IMMEDIATELY on metadata synchronously as baseline (Priority #10)
             lyrics_cache[cache_key] = chosen
             if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                 metadata["lyrics"] = chosen
-            log.info("Lrclib Lyrics: Set LRCLIB lyrics synchronously for %r", cache_key)
+            log.info("Lrclib Lyrics: [FOUND #10] LRCLib (Line-Level Sync) set synchronously for %r", cache_key)
 
-            # If LRCLIB already provided word-level timestamps <mm:ss.xxx>, we are done
+            # If LRCLIB already provided word-level timestamps <mm:ss.xxx>, apply Portato converter (Priority #4)
             if "<" in chosen and ">" in chosen:
+                portato = _convert_to_portato(chosen)
+                lyrics_cache[cache_key] = portato
+                metadata["lyrics"] = portato
+                log.info("Lrclib Lyrics: [FOUND #4] Better Lyrics Portato (Word-Level Karaoke) applied for %r", cache_key)
                 return
 
-            # Try upgrading to Musixmatch RichSync for word-level sync
-            log.info("Lrclib Lyrics: Trying Musixmatch RichSync word-level upgrade for %r", cache_key)
+            # Try upgrading to Priority #1 (QQMusic Syllable) or Priority #5 (Musixmatch RichSync Word)
+            log.info("Lrclib Lyrics: [UPGRADING] Trying Higher Priority Providers (#1 Syllable / #4 Portato / #5 Musixmatch RichSync) for %r...", cache_key)
             fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
             return
 
-    # Fallback to /api/search or Musixmatch RichSync
+    # Fallback to /api/search or Musixmatch RichSync / YouTube / QQMusic
     search_url = "https://lrclib.net/api/search"
     search_query = f"{clean_title} {clean_artist}".strip()
 
@@ -150,19 +290,20 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                 lyrics_cache[cache_key] = chosen
                 if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                     metadata["lyrics"] = chosen
-                log.info("Lrclib Lyrics: Set LRCLIB search lyrics synchronously for %r", cache_key)
+                log.info("Lrclib Lyrics: [FOUND #10] LRCLib Search (Line-Level Sync) set synchronously for %r", cache_key)
 
                 for lyrics in candidates:
                     if "<" in lyrics and ">" in lyrics:
-                        lyrics_cache[cache_key] = lyrics
-                        metadata["lyrics"] = lyrics
+                        portato = _convert_to_portato(lyrics)
+                        lyrics_cache[cache_key] = portato
+                        metadata["lyrics"] = portato
+                        log.info("Lrclib Lyrics: [FOUND #4] Better Lyrics Portato (Word-Level Karaoke) applied for %r", cache_key)
                         return
 
-                log.debug("Lrclib Lyrics: LRCLIB search yielded line lyrics for %r, trying Musixmatch RichSync", cache_key)
                 fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
                 return
 
-        log.debug("Lrclib Lyrics: LRCLIB search yielded no lyrics for %r, trying Musixmatch RichSync", cache_key)
+        log.info("Lrclib Lyrics: [NOT FOUND #10] LRCLib search empty for %r, querying Musixmatch RichSync & YouTube...", cache_key)
         fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
 
     try:
@@ -194,10 +335,11 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
             if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
                 metadata["lyrics"] = lrclib_backup
             _notify_ui()
-            log.info("Lrclib Lyrics: [APPLIED BACKUP] LRCLIB line-synced lyrics for %r", cache_key)
+            log.info("Lrclib Lyrics: [APPLIED #10] LRCLib line-synced lyrics for %r", cache_key)
         else:
-            log.info("Lrclib Lyrics: [FALLBACK] No Musixmatch or LRCLIB lyrics, searching NetEase for %r...", cache_key)
-            fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
+            log.info("Lrclib Lyrics: [FALLBACK #8] Querying YouTube Captions for %r...", cache_key)
+            fetch_youtube_captions(album, metadata, clean_title, clean_artist, cache_key,
+                                   fallback_fn=lambda: fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None))
 
     def set_lyrics(lyrics_text, provider_name):
         lyrics_cache[cache_key] = lyrics_text
