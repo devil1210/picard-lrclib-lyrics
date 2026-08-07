@@ -3,9 +3,13 @@
 # Copyright (C) 2024 Giorgio Fontanive (twodoorcoupe)
 #
 
+import json
 import os
 import re
+import ssl
 import threading
+import urllib.parse
+import urllib.request
 from functools import partial
 from PyQt6.QtCore import QTimer
 
