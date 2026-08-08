@@ -180,7 +180,7 @@ def fetch_youtube_captions(album, metadata, clean_title, clean_artist, cache_key
                     if lrc_lines:
                         yt_lrc = "\n".join(lrc_lines)
                         log.info("Lrclib Lyrics: [SUCCESS #8] YouTube Captions Line-Sync fetched for %r (%d lines)", cache_key, len(lrc_lines))
-                        _apply_lyrics(album, metadata, cache_key, yt_lrc, "YouTube Captions (Line-Level Sync)")
+                        _safe_apply_lyrics_on_main_thread(album, metadata, cache_key, yt_lrc, "YouTube Captions (Line-Level Sync)")
                         return
         except Exception as e:
             log.debug("Lrclib Lyrics: [YouTube Captions] Error for %r: %s", cache_key, e)
@@ -224,7 +224,7 @@ def fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache
                     lyric = l_res.get("lyric", "")
                     if lyric and isinstance(lyric, str) and lyric.strip():
                         log.info("Lrclib Lyrics: [SUCCESS #1] QQMusic Syllable/Line Karaoke fetched for %r", cache_key)
-                        _apply_lyrics(album, metadata, cache_key, lyric, "QQMusic / Better Lyrics Syllable")
+                        _safe_apply_lyrics_on_main_thread(album, metadata, cache_key, lyric, "QQMusic / Better Lyrics Syllable")
                         return
         except Exception as e:
             log.debug("Lrclib Lyrics: [QQMusic/Kugou] Error for %r: %s", cache_key, e)
@@ -276,6 +276,11 @@ def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
     _update_picard_ui(album)
     preview_lines = "\n".join(lyrics_text.splitlines()[:5])
     log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r:\n--- LYRICS PREVIEW (First 5 lines) ---\n%s\n--- END PREVIEW ---", provider_name, cache_key, preview_lines)
+
+
+def _safe_apply_lyrics_on_main_thread(album, metadata, cache_key, lyrics_text, provider_name):
+    """Safely schedule metadata assignment and UI refresh on Picard's Qt main GUI thread."""
+    QTimer.singleShot(0, lambda a=album, m=metadata, c=cache_key, txt=lyrics_text, p=provider_name: _apply_lyrics(a, m, c, txt, p))
 
 
 def response_handler(album, metadata, clean_title, clean_artist, cache_key, document, reply, error):
@@ -387,39 +392,14 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
     def apply_fallback():
         if lrclib_backup:
             if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                _apply_lyrics(album, metadata, cache_key, lrclib_backup, "LRCLib (Line-Level Sync Fallback)")
+                _safe_apply_lyrics_on_main_thread(album, metadata, cache_key, lrclib_backup, "LRCLib (Line-Level Sync Fallback)")
         else:
             log.info("Lrclib Lyrics: [FALLBACK #8] Querying YouTube Captions for %r...", cache_key)
             fetch_youtube_captions(album, metadata, clean_title, clean_artist, cache_key,
                                    fallback_fn=lambda: fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None))
 
     def set_lyrics(lyrics_text, provider_name):
-        lyrics_cache[cache_key] = lyrics_text
-        metadata["lyrics"] = lyrics_text
-        if album and hasattr(album, "tracks"):
-            for trk in album.tracks:
-                t_title = _clean_str(trk.metadata.get("_original_title") or trk.metadata.get("title")).lower()
-                t_artist = _clean_str(trk.metadata.get("_original_artist") or trk.metadata.get("artist")).lower()
-                if (t_title, t_artist) == cache_key or trk.metadata == metadata:
-                    trk.metadata["lyrics"] = lyrics_text
-                    if hasattr(trk, "mark_as_changed"):
-                        try:
-                            trk.mark_as_changed()
-                        except Exception:
-                            pass
-                    if hasattr(trk, "files"):
-                        for f in trk.files:
-                            f.metadata["lyrics"] = lyrics_text
-                            if hasattr(f, "mark_as_changed"):
-                                try:
-                                    f.mark_as_changed()
-                                except Exception:
-                                    pass
-                            elif hasattr(f, "pending_changes"):
-                                f.pending_changes = True
-        _update_picard_ui(album)
-        preview_lines = "\n".join(lyrics_text.splitlines()[:5])
-        log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r:\n--- LYRICS PREVIEW (First 5 lines) ---\n%s\n--- END PREVIEW ---", provider_name, cache_key, preview_lines)
+        _safe_apply_lyrics_on_main_thread(album, metadata, cache_key, lyrics_text, provider_name)
 
     def _worker():
         try:
