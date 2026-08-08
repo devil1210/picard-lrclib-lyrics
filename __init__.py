@@ -301,8 +301,8 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
     search_query = f"{clean_title} {clean_artist}".strip()
 
     def apply_final_backup():
-        log.info("Lrclib Lyrics: [NOT FOUND #10] LRCLib search empty for %r, querying Musixmatch RichSync & YouTube...", cache_key)
-        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
+        log.info("Lrclib Lyrics: [TRYING #4] Musixmatch Subtitle & NetEase for %r...", cache_key)
+        fetch_musixmatch_subtitle(album, metadata, clean_title, clean_artist, cache_key)
 
     def search_handler(doc, rep, err):
         if doc and not err and isinstance(doc, list):
@@ -324,8 +324,6 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                         portato = _convert_to_portato(lyrics)
                         _apply_lyrics(album, metadata, cache_key, portato, "Better Lyrics Portato (Word-Level Karaoke)")
                         return
-
-                fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
                 return
 
         apply_final_backup()
@@ -550,6 +548,66 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
             log.warning("Lrclib Lyrics: [Musixmatch] Error for %r: %s\n%s", cache_key, e, traceback.format_exc())
 
         apply_fallback()
+
+    t = threading.Thread(target=_worker)
+    t.daemon = True
+    t.start()
+
+
+def fetch_musixmatch_subtitle(album, metadata, clean_title, clean_artist, cache_key):
+    def _worker():
+        try:
+            import urllib.request
+            import urllib.parse
+            import json
+            import ssl
+
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            tok = _get_musixmatch_token(headers, ctx)
+
+            if tok:
+                q_art = urllib.parse.quote(clean_artist.strip())
+                q_trk = urllib.parse.quote(clean_title.strip())
+                q_full = urllib.parse.quote(f"{clean_title.strip()} {clean_artist.strip()}")
+
+                search_urls = [
+                    f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_artist={q_art}&q_track={q_trk}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0",
+                    f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q={q_full}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                ]
+
+                candidate_ids = []
+                for s_url in search_urls:
+                    try:
+                        s_res = json.loads(urllib.request.urlopen(urllib.request.Request(s_url, headers=headers), timeout=5, context=ctx).read().decode("utf-8"))
+                        track_list = _get_dict_path(s_res, ["message", "body", "track_list"], default=[])
+                        if track_list and isinstance(track_list, list):
+                            for track_item in track_list:
+                                if isinstance(track_item, dict):
+                                    tid = _get_dict_path(track_item, ["track", "track_id"])
+                                    if tid and tid not in candidate_ids:
+                                        candidate_ids.append(tid)
+                    except Exception:
+                        pass
+
+                for track_id in candidate_ids:
+                    try:
+                        sub_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                        sub_res = json.loads(urllib.request.urlopen(urllib.request.Request(sub_url, headers=headers), timeout=5, context=ctx).read().decode("utf-8"))
+                        sub_body = _get_dict_path(sub_res, ["message", "body", "subtitle", "subtitle_body"])
+                        if sub_body and isinstance(sub_body, str) and sub_body.strip():
+                            _safe_apply_lyrics_on_main_thread(album, metadata, cache_key, sub_body, "Musixmatch Subtitle (Line-Level Sync)")
+                            return
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        log.info("Lrclib Lyrics: [TRYING #5] NetEase / Unsynced Plain Text for %r...", cache_key)
+        fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
 
     t = threading.Thread(target=_worker)
     t.daemon = True
