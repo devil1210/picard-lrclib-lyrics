@@ -310,13 +310,16 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                 portato = _convert_to_portato(chosen)
                 _apply_lyrics(album, metadata, cache_key, portato, "Better Lyrics Portato (Word-Level Karaoke)")
             
-            log.info("Lrclib Lyrics: [UPGRADING] Trying Higher Priority Providers (#1 Syllable / #4 Portato / #5 Musixmatch RichSync) for %r...", cache_key)
-            fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache_key,
-                                       fallback_fn=lambda: fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen))
+            log.info("Lrclib Lyrics: [UPGRADING] Trying Higher Priority Providers (#5 Musixmatch RichSync) for %r...", cache_key)
+            fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
             return
 
     search_url = "https://lrclib.net/api/search"
     search_query = f"{clean_title} {clean_artist}".strip()
+
+    def apply_final_backup():
+        log.info("Lrclib Lyrics: [NOT FOUND #10] LRCLib search empty for %r, querying Musixmatch RichSync & YouTube...", cache_key)
+        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
 
     def search_handler(doc, rep, err):
         if doc and not err and isinstance(doc, list):
@@ -342,8 +345,7 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                 fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
                 return
 
-        log.info("Lrclib Lyrics: [NOT FOUND #10] LRCLib search empty for %r, querying Musixmatch RichSync & YouTube...", cache_key)
-        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
+        apply_final_backup()
 
     try:
         album.tagger.webservice.get_url(
@@ -355,7 +357,7 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
             important=False
         )
     except Exception:
-        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
+        apply_final_backup()
 
 
 def _do_fetch_lyrics(album, metadata, clean_title, raw_artist, cache_key):
@@ -648,30 +650,26 @@ def fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, 
 
 
 def _do_fetch_lyrics(album, metadata, clean_title, raw_artist, cache_key):
-    clean_artist = _clean_artist_for_query(raw_artist)
-
-    def _query_lrclib():
-        try:
-            req_args = {
-                "track_name": clean_title,
-                "artist_name": clean_artist,
-            }
-            log.info("Lrclib Lyrics: Querying lrclib.net for title=%r, artist=%r", clean_title, clean_artist)
-            handler = partial(response_handler, album, metadata, clean_title, clean_artist, cache_key)
-            album.tagger.webservice.get_url(
-                method="GET",
-                handler=handler,
-                parse_response_type='json',
-                url=URL,
-                unencoded_queryargs=req_args,
-                important=False
-            )
-        except Exception as e:
-            log.error("Lrclib Lyrics error: %s", e)
-            failed_lyrics_cache.add(cache_key)
-
-    log.info("Lrclib Lyrics: [TRYING #1] QQMusic/Kugou Syllable Karaoke for title=%r, artist=%r...", clean_title, clean_artist)
-    fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache_key, fallback_fn=_query_lrclib)
+    try:
+        clean_artist = _clean_artist_for_query(raw_artist)
+        req_args = {
+            "track_name": clean_title,
+            "artist_name": clean_artist,
+        }
+        log.info("Lrclib Lyrics: Querying lrclib.net for title=%r, artist=%r", clean_title, clean_artist)
+        handler = partial(response_handler, album, metadata, clean_title, clean_artist, cache_key)
+        album.tagger.webservice.get_url(
+            method="GET",
+            handler=handler,
+            parse_response_type='json',
+            url=URL,
+            unencoded_queryargs=req_args,
+            important=False
+        )
+    except Exception as e:
+        log.error("Lrclib Lyrics error: %s", e)
+        failed_lyrics_cache.add(cache_key)
+        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
 
 
 def get_lyrics(*args):
