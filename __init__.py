@@ -269,7 +269,7 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
                 portato = _convert_to_portato(chosen)
                 _apply_lyrics(album, metadata, cache_key, portato, "Better Lyrics Portato (Word-Level Karaoke)")
             
-            log.info("Lrclib Lyrics: [UPGRADING] Trying Higher Priority Providers (#5 Musixmatch RichSync) for %r...", cache_key)
+            log.info("Lrclib Lyrics: [UPGRADING] Trying Priority #2: Musixmatch RichSync (Word-Level Karaoke) for %r...", cache_key)
             fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
             return
 
