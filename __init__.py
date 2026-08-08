@@ -419,24 +419,42 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                 log.info("Lrclib Lyrics: [Musixmatch] Using token, searching track title=%r, artist=%r...", clean_title, clean_artist)
                 q_art = urllib.parse.quote(clean_artist.strip())
                 q_trk = urllib.parse.quote(clean_title.strip())
-                search_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_artist={q_art}&q_track={q_trk}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0"
-                s_res = json.loads(urllib.request.urlopen(urllib.request.Request(search_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
-                track_list = _get_dict_path(s_res, ["message", "body", "track_list"], default=[])
+                q_full = urllib.parse.quote(f"{clean_title.strip()} {clean_artist.strip()}")
 
-                if not (track_list and isinstance(track_list, list) and len(track_list) > 0):
-                    log.info("Lrclib Lyrics: [Musixmatch] Search with artist yielded 0 results, retrying with title=%r only...", clean_title)
-                    search_url_title_only = f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_track={q_trk}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0"
-                    s_res_title = json.loads(urllib.request.urlopen(urllib.request.Request(search_url_title_only, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
-                    track_list = _get_dict_path(s_res_title, ["message", "body", "track_list"], default=[])
+                search_urls = [
+                    f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_artist={q_art}&q_track={q_trk}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0",
+                    f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q={q_full}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0",
+                    f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_track={q_trk}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                ]
 
-                if track_list and isinstance(track_list, list) and len(track_list) > 0:
-                    candidate_ids = []
-                    for track_item in track_list:
-                        if isinstance(track_item, dict):
-                            tid = _get_dict_path(track_item, ["track", "track_id"])
-                            if tid and tid not in candidate_ids:
-                                candidate_ids.append(tid)
+                all_candidates = []
+                rich_candidates = []
 
+                for s_url in search_urls:
+                    try:
+                        s_res = json.loads(urllib.request.urlopen(urllib.request.Request(s_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
+                        track_list = _get_dict_path(s_res, ["message", "body", "track_list"], default=[])
+                        if track_list and isinstance(track_list, list):
+                            for track_item in track_list:
+                                if isinstance(track_item, dict):
+                                    trk_obj = _get_dict_path(track_item, ["track"], default={})
+                                    tid = trk_obj.get("track_id")
+                                    has_rs = trk_obj.get("has_richsync", 0)
+                                    if tid:
+                                        if has_rs == 1:
+                                            if tid not in rich_candidates:
+                                                rich_candidates.append(tid)
+                                        else:
+                                            if tid not in all_candidates and tid not in rich_candidates:
+                                                all_candidates.append(tid)
+                        if rich_candidates:
+                            break
+                    except Exception as e_search:
+                        log.debug("Lrclib Lyrics: [Musixmatch] Search URL error: %s", e_search)
+
+                candidate_ids = rich_candidates + all_candidates
+
+                if candidate_ids:
                     # 1. Try RichSync across candidates
                     for track_id in candidate_ids:
                         try:
