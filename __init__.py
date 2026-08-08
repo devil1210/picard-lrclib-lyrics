@@ -257,13 +257,24 @@ _apply_bridge = _LyricApplySignal()
 
 def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
     lyrics_cache[cache_key] = lyrics_text
+
     metadata["lyrics"] = lyrics_text
+    metadata["syncedlyrics"] = lyrics_text
+    metadata["unsyncedlyrics"] = lyrics_text
+
     if album and hasattr(album, "tracks"):
         for trk in album.tracks:
             t_title = _clean_title_for_query(trk.metadata.get("_original_title") or trk.metadata.get("title") or "").lower()
             t_artist = _clean_artist_for_query(trk.metadata.get("_original_artist") or trk.metadata.get("artist") or "").lower()
-            if (t_title, t_artist) == cache_key or trk.metadata == metadata:
+
+            match = ((t_title, t_artist) == cache_key or 
+                     t_title == cache_key[0] or 
+                     trk.metadata == metadata)
+
+            if match:
                 trk.metadata["lyrics"] = lyrics_text
+                trk.metadata["syncedlyrics"] = lyrics_text
+                trk.metadata["unsyncedlyrics"] = lyrics_text
                 if hasattr(trk, "mark_as_changed"):
                     try:
                         trk.mark_as_changed()
@@ -272,13 +283,29 @@ def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
                 if hasattr(trk, "files"):
                     for f in trk.files:
                         f.metadata["lyrics"] = lyrics_text
+                        f.metadata["syncedlyrics"] = lyrics_text
+                        f.metadata["unsyncedlyrics"] = lyrics_text
                         if hasattr(f, "mark_as_changed"):
                             try:
                                 f.mark_as_changed()
                             except Exception:
                                 pass
-                        elif hasattr(f, "pending_changes"):
-                            f.pending_changes = True
+                        f.pending_changes = True
+
+    if album and hasattr(album, "unmatched_files"):
+        for f in album.unmatched_files:
+            f_title = _clean_title_for_query(f.metadata.get("title") or "").lower()
+            if f_title == cache_key[0] or f.metadata == metadata:
+                f.metadata["lyrics"] = lyrics_text
+                f.metadata["syncedlyrics"] = lyrics_text
+                f.metadata["unsyncedlyrics"] = lyrics_text
+                if hasattr(f, "mark_as_changed"):
+                    try:
+                        f.mark_as_changed()
+                    except Exception:
+                        pass
+                f.pending_changes = True
+
     _update_picard_ui(album)
     preview_lines = "\n".join(lyrics_text.splitlines()[:5])
     log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r:\n--- LYRICS PREVIEW (First 5 lines) ---\n%s\n--- END PREVIEW ---", provider_name, cache_key, preview_lines)
