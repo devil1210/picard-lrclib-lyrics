@@ -252,6 +252,27 @@ def _update_picard_ui(album):
 def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
     lyrics_cache[cache_key] = lyrics_text
     metadata["lyrics"] = lyrics_text
+    if album and hasattr(album, "tracks"):
+        for trk in album.tracks:
+            t_title = _clean_str(trk.metadata.get("_original_title") or trk.metadata.get("title")).lower()
+            t_artist = _clean_str(trk.metadata.get("_original_artist") or trk.metadata.get("artist")).lower()
+            if (t_title, t_artist) == cache_key or trk.metadata == metadata:
+                trk.metadata["lyrics"] = lyrics_text
+                if hasattr(trk, "mark_as_changed"):
+                    try:
+                        trk.mark_as_changed()
+                    except Exception:
+                        pass
+                if hasattr(trk, "files"):
+                    for f in trk.files:
+                        f.metadata["lyrics"] = lyrics_text
+                        if hasattr(f, "mark_as_changed"):
+                            try:
+                                f.mark_as_changed()
+                            except Exception:
+                                pass
+                        elif hasattr(f, "pending_changes"):
+                            f.pending_changes = True
     _update_picard_ui(album)
     preview_lines = "\n".join(lyrics_text.splitlines()[:5])
     log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r:\n--- LYRICS PREVIEW (First 5 lines) ---\n%s\n--- END PREVIEW ---", provider_name, cache_key, preview_lines)
@@ -396,9 +417,21 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                 t_artist = _clean_str(trk.metadata.get("_original_artist") or trk.metadata.get("artist")).lower()
                 if (t_title, t_artist) == cache_key or trk.metadata == metadata:
                     trk.metadata["lyrics"] = lyrics_text
+                    if hasattr(trk, "mark_as_changed"):
+                        try:
+                            trk.mark_as_changed()
+                        except Exception:
+                            pass
                     if hasattr(trk, "files"):
                         for f in trk.files:
                             f.metadata["lyrics"] = lyrics_text
+                            if hasattr(f, "mark_as_changed"):
+                                try:
+                                    f.mark_as_changed()
+                                except Exception:
+                                    pass
+                            elif hasattr(f, "pending_changes"):
+                                f.pending_changes = True
         _update_picard_ui(album)
         preview_lines = "\n".join(lyrics_text.splitlines()[:5])
         log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r:\n--- LYRICS PREVIEW (First 5 lines) ---\n%s\n--- END PREVIEW ---", provider_name, cache_key, preview_lines)
