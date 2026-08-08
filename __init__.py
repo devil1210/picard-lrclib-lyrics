@@ -52,6 +52,7 @@ LRC_FILENAME = "exported_lrc_filename"
 LRC_AS_SIDECAR = "lrc_as_sidecar"
 EXPORT_LRC = "exported_lrc"
 NEVER_REPLACE_LRC = "never_replace_lrc"
+ENABLE_KARAOKE_WORD_SYNC = "enable_karaoke_word_sync"
 
 # In-memory caches to prevent redundant network requests and UI freezes
 lyrics_cache = {}           # (title_lower, artist_lower) -> lyrics_str
@@ -724,8 +725,16 @@ def fetch_lrclib_lyrics(album, metadata, clean_title, clean_artist, cache_key):
 
 def _do_fetch_lyrics(album, metadata, clean_title, raw_artist, cache_key):
     clean_artist = _clean_artist_for_query(raw_artist)
-    log.info("Lrclib Lyrics: [TRYING #1] Musixmatch RichSync (Word-Level Karaoke) for title=%r, artist=%r...", clean_title, clean_artist)
-    fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+    enable_karaoke = _get_option(ENABLE_KARAOKE_WORD_SYNC, False)
+    if enable_karaoke:
+        log.info("Lrclib Lyrics: [TRYING #1] Musixmatch RichSync (Word-Level Karaoke) for title=%r, artist=%r...", clean_title, clean_artist)
+        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+    else:
+        log.info("Lrclib Lyrics: Word-Level Karaoke Sync is disabled by default in options. Skipping Musixmatch RichSync, starting from YouTube Captions...")
+        fetch_youtube_captions(
+            album, metadata, clean_title, clean_artist, cache_key,
+            fallback_fn=lambda: fetch_lrclib_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+        )
 
 
 def get_lyrics(*args):
@@ -944,7 +953,8 @@ class LrclibLyricsOptions(OptionsPage):
         from PyQt6 import QtWidgets
 
         self.cb_unsynced = QtWidgets.QCheckBox("Download and embed unsynced lyrics", self)
-        self.cb_synced = QtWidgets.QCheckBox("Download and embed synced lyrics (Karaoke / Timestamped LRC)", self)
+        self.cb_synced = QtWidgets.QCheckBox("Download and embed synced lyrics (Line-Level LRC)", self)
+        self.cb_karaoke = QtWidgets.QCheckBox("Enable Musixmatch Word-Level Karaoke Sync (<mm:ss.xx>)", self)
         self.cb_never_replace = QtWidgets.QCheckBox("Never replace any embedded lyrics if already present", self)
         self.cb_export_lrc = QtWidgets.QCheckBox("Export lyrics to .lrc file when saving (priority to synced Karaoke lyrics)", self)
         self.cb_sidecar = QtWidgets.QCheckBox("Save the LRC file as a sidecar file to the audio file (for Navidrome & Feishin)", self)
@@ -953,6 +963,7 @@ class LrclibLyricsOptions(OptionsPage):
         vbox = QtWidgets.QVBoxLayout(self)
         vbox.addWidget(self.cb_unsynced)
         vbox.addWidget(self.cb_synced)
+        vbox.addWidget(self.cb_karaoke)
         vbox.addWidget(self.cb_never_replace)
         vbox.addWidget(self.cb_export_lrc)
         vbox.addWidget(self.cb_sidecar)
@@ -962,6 +973,7 @@ class LrclibLyricsOptions(OptionsPage):
     def load(self):
         self.cb_unsynced.setChecked(bool(self.api.plugin_config[ADD_UNSYNCED_LYRICS]))
         self.cb_synced.setChecked(bool(self.api.plugin_config[ADD_SYNCED_LYRICS]))
+        self.cb_karaoke.setChecked(bool(self.api.plugin_config[ENABLE_KARAOKE_WORD_SYNC]))
         self.cb_never_replace.setChecked(bool(self.api.plugin_config[NEVER_REPLACE_LYRICS]))
         self.cb_export_lrc.setChecked(bool(self.api.plugin_config[EXPORT_LRC]))
         self.cb_sidecar.setChecked(bool(self.api.plugin_config[LRC_AS_SIDECAR]))
@@ -970,6 +982,7 @@ class LrclibLyricsOptions(OptionsPage):
     def save(self):
         self.api.plugin_config[ADD_UNSYNCED_LYRICS] = self.cb_unsynced.isChecked()
         self.api.plugin_config[ADD_SYNCED_LYRICS] = self.cb_synced.isChecked()
+        self.api.plugin_config[ENABLE_KARAOKE_WORD_SYNC] = self.cb_karaoke.isChecked()
         self.api.plugin_config[NEVER_REPLACE_LYRICS] = self.cb_never_replace.isChecked()
         self.api.plugin_config[EXPORT_LRC] = self.cb_export_lrc.isChecked()
         self.api.plugin_config[LRC_AS_SIDECAR] = self.cb_sidecar.isChecked()
@@ -983,6 +996,7 @@ def enable(api: PluginApi):
         try:
             api.plugin_config.register_option(ADD_UNSYNCED_LYRICS, True)
             api.plugin_config.register_option(ADD_SYNCED_LYRICS, True)
+            api.plugin_config.register_option(ENABLE_KARAOKE_WORD_SYNC, False)
             api.plugin_config.register_option(NEVER_REPLACE_LYRICS, False)
             api.plugin_config.register_option(EXPORT_LRC, True)
             api.plugin_config.register_option(LRC_AS_SIDECAR, True)
