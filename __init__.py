@@ -286,18 +286,12 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
         synced_lyrics = document.get("syncedLyrics")
         chosen = synced_lyrics or unsynced_lyrics
         if chosen:
-            lyrics_cache[cache_key] = chosen
             if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                metadata["lyrics"] = chosen
-            _update_picard_ui(album)
-            log.info("Lrclib Lyrics: [FOUND #10] LRCLib (Line-Level Sync) set synchronously for %r", cache_key)
+                _apply_lyrics(album, metadata, cache_key, chosen, "LRCLib (Line-Level Sync)")
 
             if "<" in chosen and ">" in chosen:
                 portato = _convert_to_portato(chosen)
-                lyrics_cache[cache_key] = portato
-                metadata["lyrics"] = portato
-                _update_picard_ui(album)
-                log.info("Lrclib Lyrics: [FOUND #4] Better Lyrics Portato (Word-Level Karaoke) applied for %r", cache_key)
+                _apply_lyrics(album, metadata, cache_key, portato, "Better Lyrics Portato (Word-Level Karaoke)")
                 return
 
             log.info("Lrclib Lyrics: [UPGRADING] Trying Higher Priority Providers (#1 Syllable / #4 Portato / #5 Musixmatch RichSync) for %r...", cache_key)
@@ -319,19 +313,13 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
 
             if candidates:
                 chosen = candidates[0]
-                lyrics_cache[cache_key] = chosen
                 if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                    metadata["lyrics"] = chosen
-                _update_picard_ui(album)
-                log.info("Lrclib Lyrics: [FOUND #10] LRCLib Search (Line-Level Sync) set synchronously for %r", cache_key)
+                    _apply_lyrics(album, metadata, cache_key, chosen, "LRCLib Search (Line-Level Sync)")
 
                 for lyrics in candidates:
                     if "<" in lyrics and ">" in lyrics:
                         portato = _convert_to_portato(lyrics)
-                        lyrics_cache[cache_key] = portato
-                        metadata["lyrics"] = portato
-                        _update_picard_ui(album)
-                        log.info("Lrclib Lyrics: [FOUND #4] Better Lyrics Portato (Word-Level Karaoke) applied for %r", cache_key)
+                        _apply_lyrics(album, metadata, cache_key, portato, "Better Lyrics Portato (Word-Level Karaoke)")
                         return
 
                 fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
@@ -398,11 +386,8 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
 
     def apply_fallback():
         if lrclib_backup:
-            lyrics_cache[cache_key] = lrclib_backup
             if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                metadata["lyrics"] = lrclib_backup
-            _update_picard_ui(album)
-            log.info("Lrclib Lyrics: [APPLIED #10] LRCLib line-synced lyrics for %r", cache_key)
+                _apply_lyrics(album, metadata, cache_key, lrclib_backup, "LRCLib (Line-Level Sync Fallback)")
         else:
             log.info("Lrclib Lyrics: [FALLBACK #8] Querying YouTube Captions for %r...", cache_key)
             fetch_youtube_captions(album, metadata, clean_title, clean_artist, cache_key,
