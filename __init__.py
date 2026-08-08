@@ -393,6 +393,22 @@ def _get_dict_path(d, keys, default=None):
     return curr if curr is not None else default
 
 
+_REJECT_TITLE_KEYWORDS = ["demo", "outtake", "commentary", "session", "work tape", "tribute", "karaoke", "cover", "instrumental"]
+
+def _is_valid_track_variant(clean_title: str, candidate_title: str) -> bool:
+    clean_lower = clean_title.lower()
+    cand_lower = candidate_title.lower()
+
+    for kw in _REJECT_TITLE_KEYWORDS:
+        if kw in cand_lower and kw not in clean_lower:
+            return False
+
+    if "live" in cand_lower and "live" not in clean_lower:
+        return False
+
+    return True
+
+
 def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None):
     title_is_cjk = _contains_cjk(clean_title)
 
@@ -446,6 +462,9 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                                     if isinstance(track_item, dict):
                                         trk_obj = _get_dict_path(track_item, ["track"], default={})
                                         tid = trk_obj.get("track_id")
+                                        tname = trk_obj.get("track_name") or ""
+                                        if not _is_valid_track_variant(clean_title, tname):
+                                            continue
                                         has_rs = trk_obj.get("has_richsync", 0)
                                         if tid:
                                             if has_rs == 1:
