@@ -212,7 +212,7 @@ def fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache
 
             log.info("Lrclib Lyrics: [TRYING #1] QQMusic/Kugou Syllable Karaoke searching for %r...", cache_key)
             req = urllib.request.Request(search_url, headers=headers)
-            res_data = json.loads(urllib.request.urlopen(req, timeout=6, context=ctx).read().decode("utf-8"))
+            res_data = json.loads(urllib.request.urlopen(req, timeout=2.0, context=ctx).read().decode("utf-8"))
             song_list = res_data.get("data", {}).get("song", {}).get("list", [])
 
             if song_list and len(song_list) > 0:
@@ -220,7 +220,7 @@ def fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache
                 if songmid:
                     lyric_url = f"https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={songmid}&format=json&nobase64=1"
                     l_req = urllib.request.Request(lyric_url, headers=headers)
-                    l_res = json.loads(urllib.request.urlopen(l_req, timeout=6, context=ctx).read().decode("utf-8"))
+                    l_res = json.loads(urllib.request.urlopen(l_req, timeout=2.0, context=ctx).read().decode("utf-8"))
                     lyric = l_res.get("lyric", "")
                     if lyric and isinstance(lyric, str) and lyric.strip():
                         log.info("Lrclib Lyrics: [SUCCESS #1] QQMusic Syllable/Line Karaoke fetched for %r", cache_key)
@@ -297,10 +297,10 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
             if "<" in chosen and ">" in chosen:
                 portato = _convert_to_portato(chosen)
                 _apply_lyrics(album, metadata, cache_key, portato, "Better Lyrics Portato (Word-Level Karaoke)")
-                return
-
+            
             log.info("Lrclib Lyrics: [UPGRADING] Trying Higher Priority Providers (#1 Syllable / #4 Portato / #5 Musixmatch RichSync) for %r...", cache_key)
-            fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
+            fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache_key,
+                                       fallback_fn=lambda: fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen))
             return
 
     search_url = "https://lrclib.net/api/search"
@@ -343,6 +343,29 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
             important=False
         )
     except Exception:
+        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
+
+
+def _do_fetch_lyrics(album, metadata, clean_title, raw_artist, cache_key):
+    try:
+        clean_artist = _clean_artist_for_query(raw_artist)
+        req_args = {
+            "track_name": clean_title,
+            "artist_name": clean_artist,
+        }
+        log.info("Lrclib Lyrics: Querying lrclib.net for title=%r, artist=%r", clean_title, clean_artist)
+        handler = partial(response_handler, album, metadata, clean_title, clean_artist, cache_key)
+        album.tagger.webservice.get_url(
+            method="GET",
+            handler=handler,
+            parse_response_type='json',
+            url=URL,
+            unencoded_queryargs=req_args,
+            important=False
+        )
+    except Exception as e:
+        log.error("Lrclib Lyrics error: %s", e)
+        failed_lyrics_cache.add(cache_key)
         fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
 
 
