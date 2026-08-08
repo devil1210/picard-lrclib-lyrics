@@ -613,25 +613,30 @@ def fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, 
 
 
 def _do_fetch_lyrics(album, metadata, clean_title, raw_artist, cache_key):
-    try:
-        clean_artist = _clean_artist_for_query(raw_artist)
-        req_args = {
-            "track_name": clean_title,
-            "artist_name": clean_artist,
-        }
-        log.info("Lrclib Lyrics: Querying lrclib.net for title=%r, artist=%r", clean_title, clean_artist)
-        handler = partial(response_handler, album, metadata, clean_title, clean_artist, cache_key)
-        album.tagger.webservice.get_url(
-            method="GET",
-            handler=handler,
-            parse_response_type='json',
-            url=URL,
-            unencoded_queryargs=req_args,
-            important=False
-        )
-    except Exception as e:
-        log.error("Lrclib Lyrics error: %s", e)
-        failed_lyrics_cache.add(cache_key)
+    clean_artist = _clean_artist_for_query(raw_artist)
+
+    def _query_lrclib():
+        try:
+            req_args = {
+                "track_name": clean_title,
+                "artist_name": clean_artist,
+            }
+            log.info("Lrclib Lyrics: Querying lrclib.net for title=%r, artist=%r", clean_title, clean_artist)
+            handler = partial(response_handler, album, metadata, clean_title, clean_artist, cache_key)
+            album.tagger.webservice.get_url(
+                method="GET",
+                handler=handler,
+                parse_response_type='json',
+                url=URL,
+                unencoded_queryargs=req_args,
+                important=False
+            )
+        except Exception as e:
+            log.error("Lrclib Lyrics error: %s", e)
+            failed_lyrics_cache.add(cache_key)
+
+    log.info("Lrclib Lyrics: [TRYING #1] QQMusic/Kugou Syllable Karaoke for title=%r, artist=%r...", clean_title, clean_artist)
+    fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache_key, fallback_fn=_query_lrclib)
 
 
 def get_lyrics(*args):
