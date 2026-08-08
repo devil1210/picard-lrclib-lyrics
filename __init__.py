@@ -386,13 +386,11 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
     title_is_cjk = _contains_cjk(clean_title)
 
     def apply_fallback():
-        if lrclib_backup:
-            if not (_get_option(NEVER_REPLACE_LYRICS, False) and metadata.get("lyrics")):
-                _safe_apply_lyrics_on_main_thread(album, metadata, cache_key, lrclib_backup, "LRCLib (Line-Level Sync Fallback)")
-        else:
-            log.info("Lrclib Lyrics: [FALLBACK #8] Querying YouTube Captions for %r...", cache_key)
-            fetch_youtube_captions(album, metadata, clean_title, clean_artist, cache_key,
-                                   fallback_fn=lambda: fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None))
+        log.info("Lrclib Lyrics: [TRYING #2] YouTube Captions for %r...", cache_key)
+        fetch_youtube_captions(
+            album, metadata, clean_title, clean_artist, cache_key,
+            fallback_fn=lambda: fetch_lrclib_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+        )
 
     def set_lyrics(lyrics_text, provider_name):
         _safe_apply_lyrics_on_main_thread(album, metadata, cache_key, lyrics_text, provider_name)
@@ -608,15 +606,14 @@ def fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key, 
         apply_final_backup()
 
 
-def _do_fetch_lyrics(album, metadata, clean_title, raw_artist, cache_key):
+def fetch_lrclib_lyrics(album, metadata, clean_title, clean_artist, cache_key):
+    log.info("Lrclib Lyrics: [TRYING #3] LRCLib for title=%r, artist=%r...", clean_title, clean_artist)
+    req_args = {
+        "track_name": clean_title,
+        "artist_name": clean_artist,
+    }
+    handler = partial(response_handler, album, metadata, clean_title, clean_artist, cache_key)
     try:
-        clean_artist = _clean_artist_for_query(raw_artist)
-        req_args = {
-            "track_name": clean_title,
-            "artist_name": clean_artist,
-        }
-        log.info("Lrclib Lyrics: Querying lrclib.net for title=%r, artist=%r", clean_title, clean_artist)
-        handler = partial(response_handler, album, metadata, clean_title, clean_artist, cache_key)
         album.tagger.webservice.get_url(
             method="GET",
             handler=handler,
@@ -627,8 +624,13 @@ def _do_fetch_lyrics(album, metadata, clean_title, raw_artist, cache_key):
         )
     except Exception as e:
         log.error("Lrclib Lyrics error: %s", e)
-        failed_lyrics_cache.add(cache_key)
-        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
+        fetch_netease_lyrics(album, metadata, clean_title, clean_artist, cache_key)
+
+
+def _do_fetch_lyrics(album, metadata, clean_title, raw_artist, cache_key):
+    clean_artist = _clean_artist_for_query(raw_artist)
+    log.info("Lrclib Lyrics: [TRYING #1] Musixmatch RichSync (Word-Level Karaoke) for title=%r, artist=%r...", clean_title, clean_artist)
+    fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key)
 
 
 def get_lyrics(*args):
