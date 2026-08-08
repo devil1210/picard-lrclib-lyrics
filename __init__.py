@@ -293,7 +293,9 @@ def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
                         f.pending_changes = True
 
     if album and hasattr(album, "unmatched_files"):
-        for f in album.unmatched_files:
+        unmatched = getattr(album, "unmatched_files", None)
+        u_files = getattr(unmatched, "files", []) if hasattr(unmatched, "files") else (unmatched if isinstance(unmatched, (list, tuple, set)) else [])
+        for f in u_files:
             f_title = _clean_title_for_query(f.metadata.get("title") or "").lower()
             if f_title == cache_key[0] or f.metadata == metadata:
                 f.metadata["lyrics"] = lyrics_text
