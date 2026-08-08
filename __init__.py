@@ -11,7 +11,7 @@ import threading
 import urllib.parse
 import urllib.request
 from functools import partial
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from picard import log
 from picard.config import config
@@ -249,6 +249,12 @@ def _update_picard_ui(album):
                 pass
 
 
+class _LyricApplySignal(QObject):
+    apply_sig = pyqtSignal(object, object, object, str, str)
+
+_apply_bridge = _LyricApplySignal()
+
+
 def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
     lyrics_cache[cache_key] = lyrics_text
     metadata["lyrics"] = lyrics_text
@@ -278,9 +284,12 @@ def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
     log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r:\n--- LYRICS PREVIEW (First 5 lines) ---\n%s\n--- END PREVIEW ---", provider_name, cache_key, preview_lines)
 
 
+_apply_bridge.apply_sig.connect(_apply_lyrics)
+
+
 def _safe_apply_lyrics_on_main_thread(album, metadata, cache_key, lyrics_text, provider_name):
-    """Safely schedule metadata assignment and UI refresh on Picard's Qt main GUI thread."""
-    QTimer.singleShot(0, lambda a=album, m=metadata, c=cache_key, txt=lyrics_text, p=provider_name: _apply_lyrics(a, m, c, txt, p))
+    """Safely schedule metadata assignment and UI refresh on Picard's Qt main GUI thread via pyqtSignal."""
+    _apply_bridge.apply_sig.emit(album, metadata, cache_key, lyrics_text, provider_name)
 
 
 def response_handler(album, metadata, clean_title, clean_artist, cache_key, document, reply, error):
