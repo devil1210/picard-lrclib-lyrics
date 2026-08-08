@@ -292,9 +292,9 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
             if "<" in chosen and ">" in chosen:
                 portato = _convert_to_portato(chosen)
                 _apply_lyrics(album, metadata, cache_key, portato, "Better Lyrics Portato (Word-Level Karaoke)")
-            
-            log.info("Lrclib Lyrics: [UPGRADING] Trying Priority #2: Musixmatch RichSync (Word-Level Karaoke) for %r...", cache_key)
-            fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=chosen)
+
+            # LRCLib lyrics applied successfully - waterfall stops here
+            log.info("Lrclib Lyrics: [DONE] LRCLib lyrics applied for %r, no further fallback needed.", cache_key)
             return
 
     search_url = "https://lrclib.net/api/search"
@@ -341,27 +341,8 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
         apply_final_backup()
 
 
-def _do_fetch_lyrics(album, metadata, clean_title, raw_artist, cache_key):
-    try:
-        clean_artist = _clean_artist_for_query(raw_artist)
-        req_args = {
-            "track_name": clean_title,
-            "artist_name": clean_artist,
-        }
-        log.info("Lrclib Lyrics: Querying lrclib.net for title=%r, artist=%r", clean_title, clean_artist)
-        handler = partial(response_handler, album, metadata, clean_title, clean_artist, cache_key)
-        album.tagger.webservice.get_url(
-            method="GET",
-            handler=handler,
-            parse_response_type='json',
-            url=URL,
-            unencoded_queryargs=req_args,
-            important=False
-        )
-    except Exception as e:
-        log.error("Lrclib Lyrics error: %s", e)
-        failed_lyrics_cache.add(cache_key)
-        fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_key, lrclib_backup=None)
+
+
 
 
 _cached_musixmatch_token = None
