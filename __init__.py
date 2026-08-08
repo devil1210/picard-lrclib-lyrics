@@ -193,48 +193,7 @@ def fetch_youtube_captions(album, metadata, clean_title, clean_artist, cache_key
     t.start()
 
 
-def fetch_qqmusic_kugou_lyrics(album, metadata, clean_title, clean_artist, cache_key, fallback_fn=None):
-    """Fetcher for QQMusic / Kugou Syllable & Line-Level Karaoke (Priority #1 Syllable & #6 Line)."""
-    def _worker():
-        try:
-            import urllib.request
-            import urllib.parse
-            import json
-            import ssl
 
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Referer": "https://y.qq.com/"}
-            query = urllib.parse.quote(f"{clean_title} {clean_artist}")
-            search_url = f"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?p=1&n=1&w={query}&format=json"
-
-            log.info("Lrclib Lyrics: [TRYING #1] QQMusic/Kugou Syllable Karaoke searching for %r...", cache_key)
-            req = urllib.request.Request(search_url, headers=headers)
-            res_data = json.loads(urllib.request.urlopen(req, timeout=2.0, context=ctx).read().decode("utf-8"))
-            song_list = res_data.get("data", {}).get("song", {}).get("list", [])
-
-            if song_list and len(song_list) > 0:
-                songmid = song_list[0].get("songmid")
-                if songmid:
-                    lyric_url = f"https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid={songmid}&format=json&nobase64=1"
-                    l_req = urllib.request.Request(lyric_url, headers=headers)
-                    l_res = json.loads(urllib.request.urlopen(l_req, timeout=2.0, context=ctx).read().decode("utf-8"))
-                    lyric = l_res.get("lyric", "")
-                    if lyric and isinstance(lyric, str) and lyric.strip():
-                        log.info("Lrclib Lyrics: [SUCCESS #1] QQMusic Syllable/Line Karaoke fetched for %r", cache_key)
-                        _safe_apply_lyrics_on_main_thread(album, metadata, cache_key, lyric, "QQMusic / Better Lyrics Syllable")
-                        return
-        except Exception as e:
-            log.debug("Lrclib Lyrics: [QQMusic/Kugou] Error for %r: %s", cache_key, e)
-
-        if fallback_fn:
-            fallback_fn()
-
-    t = threading.Thread(target=_worker)
-    t.daemon = True
-    t.start()
 
 
 def _update_picard_ui(album):
