@@ -220,6 +220,9 @@ def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
     if isinstance(metadata, dict) or hasattr(metadata, "__setitem__"):
         metadata["lyrics"] = lyrics_text
 
+    tracks_updated = 0
+    files_updated = 0
+
     if album and hasattr(album, "tracks"):
         for trk in album.tracks:
             t_title = _clean_title_for_query(trk.metadata.get("_original_title") or trk.metadata.get("title") or "").lower().strip()
@@ -235,6 +238,7 @@ def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
 
             if match:
                 trk.metadata["lyrics"] = lyrics_text
+                tracks_updated += 1
                 if hasattr(trk, "mark_as_changed"):
                     try:
                         trk.mark_as_changed()
@@ -243,6 +247,7 @@ def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
                 if hasattr(trk, "files"):
                     for f in trk.files:
                         f.metadata["lyrics"] = lyrics_text
+                        files_updated += 1
                         if hasattr(f, "mark_as_changed"):
                             try:
                                 f.mark_as_changed()
@@ -258,6 +263,7 @@ def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
             c_title = cache_key[0].strip().lower()
             if f.metadata == metadata or f_title == c_title or c_title in f_title or f_title in c_title:
                 f.metadata["lyrics"] = lyrics_text
+                files_updated += 1
                 if hasattr(f, "mark_as_changed"):
                     try:
                         f.mark_as_changed()
@@ -267,7 +273,7 @@ def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
 
     _update_picard_ui(album)
     preview_lines = "\n".join(lyrics_text.splitlines()[:5])
-    log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r:\n--- LYRICS PREVIEW (First 5 lines) ---\n%s\n--- END PREVIEW ---", provider_name, cache_key, preview_lines)
+    log.info("Lrclib Lyrics: [SUCCESS & APPLIED] %s lyrics for %r (tracks=%d, files=%d):\n--- LYRICS PREVIEW (First 5 lines) ---\n%s\n--- END PREVIEW ---", provider_name, cache_key, tracks_updated, files_updated, preview_lines)
 
 
 _apply_bridge.apply_sig.connect(_apply_lyrics)
