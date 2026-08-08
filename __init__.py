@@ -441,6 +441,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                             s_res = json.loads(urllib.request.urlopen(urllib.request.Request(s_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
                             track_list = _get_dict_path(s_res, ["message", "body", "track_list"], default=[])
                             if track_list and isinstance(track_list, list):
+                                log.info("Lrclib Lyrics: [Musixmatch] Search returned %d results for title=%r", len(track_list), clean_title)
                                 for track_item in track_list:
                                     if isinstance(track_item, dict):
                                         trk_obj = _get_dict_path(track_item, ["track"], default={})
@@ -453,6 +454,7 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
                                             else:
                                                 if tid not in all_candidates and tid not in rich_candidates:
                                                     all_candidates.append(tid)
+                            # Only stop if we already have RichSync candidates - keep searching otherwise
                             if rich_candidates:
                                 break
                         except Exception as e_search:
