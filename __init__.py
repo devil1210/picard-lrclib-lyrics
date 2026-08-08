@@ -347,6 +347,8 @@ def response_handler(album, metadata, clean_title, clean_artist, cache_key, docu
 
 _cached_musixmatch_token = None
 _token_lock = threading.Lock()
+# Limit concurrent Musixmatch API requests to avoid saturating the API and triggering timeouts/bans
+_musixmatch_semaphore = threading.Semaphore(4)
 
 def _get_musixmatch_token(headers, ctx):
     global _cached_musixmatch_token
@@ -399,140 +401,143 @@ def fetch_musixmatch_lyrics(album, metadata, clean_title, clean_artist, cache_ke
         _safe_apply_lyrics_on_main_thread(album, metadata, cache_key, lyrics_text, provider_name)
 
     def _worker():
-        try:
-            import urllib.request
-            import urllib.parse
-            import json
-            import ssl
+        with _musixmatch_semaphore:
+            try:
+                import urllib.request
+                import urllib.parse
+                import json
+                import ssl
 
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
 
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            tok = _get_musixmatch_token(headers, ctx)
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                tok = _get_musixmatch_token(headers, ctx)
 
-            if tok:
-                log.info("Lrclib Lyrics: [Musixmatch] Using token, searching track title=%r, artist=%r...", clean_title, clean_artist)
-                q_art = urllib.parse.quote(clean_artist.strip())
-                q_trk = urllib.parse.quote(clean_title.strip())
-                q_full = urllib.parse.quote(f"{clean_title.strip()} {clean_artist.strip()}")
+                if tok:
+                    log.info("Lrclib Lyrics: [Musixmatch] Using token, searching track title=%r, artist=%r...", clean_title, clean_artist)
+                    q_art = urllib.parse.quote(clean_artist.strip())
+                    q_trk = urllib.parse.quote(clean_title.strip())
+                    q_full = urllib.parse.quote(f"{clean_title.strip()} {clean_artist.strip()}")
 
-                search_urls = [
-                    f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_artist={q_art}&q_track={q_trk}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0",
-                    f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q={q_full}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0",
-                    f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_track={q_trk}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0"
-                ]
+                    search_urls = [
+                        f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_artist={q_art}&q_track={q_trk}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0",
+                        f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q={q_full}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0",
+                        f"https://apic-desktop.musixmatch.com/ws/1.1/track.search?format=json&q_track={q_trk}&page_size=5&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                    ]
 
-                all_candidates = []
-                rich_candidates = []
+                    all_candidates = []
+                    rich_candidates = []
 
-                for s_url in search_urls:
-                    try:
-                        s_res = json.loads(urllib.request.urlopen(urllib.request.Request(s_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
-                        track_list = _get_dict_path(s_res, ["message", "body", "track_list"], default=[])
-                        if track_list and isinstance(track_list, list):
-                            for track_item in track_list:
-                                if isinstance(track_item, dict):
-                                    trk_obj = _get_dict_path(track_item, ["track"], default={})
-                                    tid = trk_obj.get("track_id")
-                                    has_rs = trk_obj.get("has_richsync", 0)
-                                    if tid:
-                                        if has_rs == 1:
-                                            if tid not in rich_candidates:
-                                                rich_candidates.append(tid)
-                                        else:
-                                            if tid not in all_candidates and tid not in rich_candidates:
-                                                all_candidates.append(tid)
-                        if rich_candidates:
-                            break
-                    except Exception as e_search:
-                        log.debug("Lrclib Lyrics: [Musixmatch] Search URL error: %s", e_search)
-
-                candidate_ids = rich_candidates + all_candidates
-
-                if candidate_ids:
-                    # 1. Try RichSync across candidates
-                    for track_id in candidate_ids:
+                    for s_url in search_urls:
                         try:
-                            rich_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.richsync.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
-                            r_res = json.loads(urllib.request.urlopen(urllib.request.Request(rich_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
-                            rich_body = _get_dict_path(r_res, ["message", "body", "richsync", "richsync_body"])
+                            s_res = json.loads(urllib.request.urlopen(urllib.request.Request(s_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
+                            track_list = _get_dict_path(s_res, ["message", "body", "track_list"], default=[])
+                            if track_list and isinstance(track_list, list):
+                                for track_item in track_list:
+                                    if isinstance(track_item, dict):
+                                        trk_obj = _get_dict_path(track_item, ["track"], default={})
+                                        tid = trk_obj.get("track_id")
+                                        has_rs = trk_obj.get("has_richsync", 0)
+                                        if tid:
+                                            if has_rs == 1:
+                                                if tid not in rich_candidates:
+                                                    rich_candidates.append(tid)
+                                            else:
+                                                if tid not in all_candidates and tid not in rich_candidates:
+                                                    all_candidates.append(tid)
+                            if rich_candidates:
+                                break
+                        except Exception as e_search:
+                            log.warning("Lrclib Lyrics: [Musixmatch] Search URL error: %s", e_search)
 
-                            if rich_body:
-                                lines = json.loads(rich_body)
-                                lrc_lines = []
-                                for l in lines:
-                                    ts = l.get("ts", 0)
-                                    min_s = int(ts // 60)
-                                    sec_s = int(ts % 60)
-                                    cs_s = int(round((ts % 1) * 100))
-                                    if cs_s >= 100:
-                                        sec_s += 1
-                                        cs_s -= 100
-                                    if sec_s >= 60:
-                                        min_s += 1
-                                        sec_s -= 60
-                                    line_str = f"[{min_s:02d}:{sec_s:02d}.{cs_s:02d}]"
-                                    for w in l.get("l", []):
-                                        c = w.get("c", "")
-                                        if not c:
-                                            continue
-                                        off = w.get("o", 0)
-                                        word_ts = ts + off
-                                        w_min = int(word_ts // 60)
-                                        w_sec = int(word_ts % 60)
-                                        w_cs = int(round((word_ts % 1) * 100))
-                                        if w_cs >= 100:
-                                            w_sec += 1
-                                            w_cs -= 100
-                                        if w_sec >= 60:
-                                            w_min += 1
-                                            w_sec -= 60
-                                        if not c.strip():
-                                            line_str += c
+                    candidate_ids = rich_candidates + all_candidates
+
+                    if candidate_ids:
+                        # 1. Try RichSync across candidates
+                        for track_id in candidate_ids:
+                            try:
+                                rich_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.richsync.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                                r_res = json.loads(urllib.request.urlopen(urllib.request.Request(rich_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
+                                rich_body = _get_dict_path(r_res, ["message", "body", "richsync", "richsync_body"])
+
+                                if rich_body:
+                                    lines = json.loads(rich_body)
+                                    lrc_lines = []
+                                    for l in lines:
+                                        ts = l.get("ts", 0)
+                                        min_s = int(ts // 60)
+                                        sec_s = int(ts % 60)
+                                        cs_s = int(round((ts % 1) * 100))
+                                        if cs_s >= 100:
+                                            sec_s += 1
+                                            cs_s -= 100
+                                        if sec_s >= 60:
+                                            min_s += 1
+                                            sec_s -= 60
+                                        line_str = f"[{min_s:02d}:{sec_s:02d}.{cs_s:02d}]"
+                                        for w in l.get("l", []):
+                                            c = w.get("c", "")
+                                            if not c:
+                                                continue
+                                            off = w.get("o", 0)
+                                            word_ts = ts + off
+                                            w_min = int(word_ts // 60)
+                                            w_sec = int(word_ts % 60)
+                                            w_cs = int(round((word_ts % 1) * 100))
+                                            if w_cs >= 100:
+                                                w_sec += 1
+                                                w_cs -= 100
+                                            if w_sec >= 60:
+                                                w_min += 1
+                                                w_sec -= 60
+                                            if not c.strip():
+                                                line_str += c
+                                            else:
+                                                line_str += f"<{w_min:02d}:{w_sec:02d}.{w_cs:02d}>{c}"
+                                        lrc_lines.append(line_str)
+
+                                    enhanced_lrc = "\n".join(lrc_lines)
+                                    if enhanced_lrc.strip():
+                                        if not title_is_cjk and _contains_cjk(enhanced_lrc):
+                                            log.warning("Lrclib Lyrics: [Musixmatch] RichSync returned CJK for non-CJK track %r, rejecting", cache_key)
                                         else:
-                                            line_str += f"<{w_min:02d}:{w_sec:02d}.{w_cs:02d}>{c}"
-                                    lrc_lines.append(line_str)
+                                            log.info("Lrclib Lyrics: [Musixmatch] RichSync Word-Level Karaoke parsed (%d lines, %d bytes) for track_id=%s", len(lrc_lines), len(enhanced_lrc), track_id)
+                                            set_lyrics(enhanced_lrc, "Musixmatch RichSync (Word-Level Karaoke)")
+                                            return
+                            except Exception as ex_rich:
+                                log.warning("Lrclib Lyrics: [Musixmatch] Error checking RichSync for track_id=%s: %s", track_id, ex_rich)
 
-                                enhanced_lrc = "\n".join(lrc_lines)
-                                if enhanced_lrc.strip():
-                                    if not title_is_cjk and _contains_cjk(enhanced_lrc):
-                                        log.warning("Lrclib Lyrics: [Musixmatch] RichSync returned CJK for non-CJK track %r, rejecting", cache_key)
+                        # 2. Try Subtitle fallback across candidates
+                        for track_id in candidate_ids:
+                            try:
+                                sub_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
+                                sub_res = json.loads(urllib.request.urlopen(urllib.request.Request(sub_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
+                                sub_body = _get_dict_path(sub_res, ["message", "body", "subtitle", "subtitle_body"])
+                                if sub_body and isinstance(sub_body, str) and sub_body.strip():
+                                    if not title_is_cjk and _contains_cjk(sub_body):
+                                        log.warning("Lrclib Lyrics: [Musixmatch] Subtitle returned CJK for non-CJK track %r, rejecting", cache_key)
                                     else:
-                                        log.info("Lrclib Lyrics: [Musixmatch] RichSync Word-Level Karaoke parsed (%d lines, %d bytes) for track_id=%s", len(lrc_lines), len(enhanced_lrc), track_id)
-                                        set_lyrics(enhanced_lrc, "Musixmatch RichSync (Word-Level Karaoke)")
+                                        set_lyrics(sub_body, "Musixmatch Subtitle (Line-Level Sync)")
                                         return
-                        except Exception as ex_rich:
-                            log.debug("Lrclib Lyrics: [Musixmatch] Error checking RichSync for track_id=%s: %s", track_id, ex_rich)
-
-                    # 2. Try Subtitle fallback across candidates
-                    for track_id in candidate_ids:
-                        try:
-                            sub_url = f"https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get?format=json&track_id={track_id}&usertoken={tok}&app_id=web-desktop-app-v1.0"
-                            sub_res = json.loads(urllib.request.urlopen(urllib.request.Request(sub_url, headers=headers), timeout=6, context=ctx).read().decode("utf-8"))
-                            sub_body = _get_dict_path(sub_res, ["message", "body", "subtitle", "subtitle_body"])
-                            if sub_body and isinstance(sub_body, str) and sub_body.strip():
-                                if not title_is_cjk and _contains_cjk(sub_body):
-                                    log.warning("Lrclib Lyrics: [Musixmatch] Subtitle returned CJK for non-CJK track %r, rejecting", cache_key)
-                                else:
-                                    set_lyrics(sub_body, "Musixmatch Subtitle (Line-Level Sync)")
-                                    return
-                        except Exception as ex_sub:
-                            log.debug("Lrclib Lyrics: [Musixmatch] Error checking Subtitle for track_id=%s: %s", track_id, ex_sub)
+                            except Exception as ex_sub:
+                                log.debug("Lrclib Lyrics: [Musixmatch] Error checking Subtitle for track_id=%s: %s", track_id, ex_sub)
+                    else:
+                        log.warning("Lrclib Lyrics: [Musixmatch] Search track yielded 0 results for title=%r, artist=%r", clean_title, clean_artist)
                 else:
-                    log.warning("Lrclib Lyrics: [Musixmatch] Search track yielded 0 results for title=%r, artist=%r", clean_title, clean_artist)
-            else:
-                log.warning("Lrclib Lyrics: [Musixmatch] Failed to acquire user_token")
-        except Exception as e:
-            import traceback
-            log.warning("Lrclib Lyrics: [Musixmatch] Error for %r: %s\n%s", cache_key, e, traceback.format_exc())
+                    log.warning("Lrclib Lyrics: [Musixmatch] Failed to acquire user_token")
+            except Exception as e:
+                import traceback
+                log.warning("Lrclib Lyrics: [Musixmatch] Error for %r: %s\n%s", cache_key, e, traceback.format_exc())
 
-        apply_fallback()
+            apply_fallback()
 
     t = threading.Thread(target=_worker)
     t.daemon = True
     t.start()
+
+
 
 
 def fetch_musixmatch_subtitle(album, metadata, clean_title, clean_artist, cache_key):
