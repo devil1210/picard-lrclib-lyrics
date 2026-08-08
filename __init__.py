@@ -254,8 +254,8 @@ def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
     metadata["lyrics"] = lyrics_text
     if album and hasattr(album, "tracks"):
         for trk in album.tracks:
-            t_title = _clean_str(trk.metadata.get("_original_title") or trk.metadata.get("title")).lower()
-            t_artist = _clean_str(trk.metadata.get("_original_artist") or trk.metadata.get("artist")).lower()
+            t_title = _clean_title_for_query(trk.metadata.get("_original_title") or trk.metadata.get("title") or "").lower()
+            t_artist = _clean_artist_for_query(trk.metadata.get("_original_artist") or trk.metadata.get("artist") or "").lower()
             if (t_title, t_artist) == cache_key or trk.metadata == metadata:
                 trk.metadata["lyrics"] = lyrics_text
                 if hasattr(trk, "mark_as_changed"):
