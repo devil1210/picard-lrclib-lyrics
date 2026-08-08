@@ -257,28 +257,15 @@ _apply_bridge = _LyricApplySignal()
 
 def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
     lyrics_cache[cache_key] = lyrics_text
-
-    if isinstance(metadata, dict) or hasattr(metadata, "__setitem__"):
-        metadata["lyrics"] = lyrics_text
-        metadata["syncedlyrics"] = lyrics_text
-        metadata["unsyncedlyrics"] = lyrics_text
-
-    target_title = cache_key[0].strip().lower()
+    metadata["lyrics"] = lyrics_text
 
     if album and hasattr(album, "tracks"):
         for trk in album.tracks:
-            t_orig = (trk.metadata.get("_original_title") or trk.metadata.get("title") or "").lower()
-            t_clean = _clean_title_for_query(t_orig).strip().lower()
+            t_title = _clean_title_for_query(trk.metadata.get("_original_title") or trk.metadata.get("title") or "").lower()
+            t_artist = _clean_artist_for_query(trk.metadata.get("_original_artist") or trk.metadata.get("artist") or "").lower()
 
-            match = (trk.metadata == metadata or
-                     t_clean == target_title or
-                     t_orig == target_title or
-                     target_title in t_clean or t_clean in target_title)
-
-            if match:
+            if (t_title, t_artist) == cache_key or trk.metadata == metadata:
                 trk.metadata["lyrics"] = lyrics_text
-                trk.metadata["syncedlyrics"] = lyrics_text
-                trk.metadata["unsyncedlyrics"] = lyrics_text
                 if hasattr(trk, "mark_as_changed"):
                     try:
                         trk.mark_as_changed()
@@ -287,31 +274,13 @@ def _apply_lyrics(album, metadata, cache_key, lyrics_text, provider_name):
                 if hasattr(trk, "files"):
                     for f in trk.files:
                         f.metadata["lyrics"] = lyrics_text
-                        f.metadata["syncedlyrics"] = lyrics_text
-                        f.metadata["unsyncedlyrics"] = lyrics_text
                         if hasattr(f, "mark_as_changed"):
                             try:
                                 f.mark_as_changed()
                             except Exception:
                                 pass
-                        f.pending_changes = True
-
-    if album and hasattr(album, "unmatched_files"):
-        unmatched = getattr(album, "unmatched_files", None)
-        u_files = getattr(unmatched, "files", []) if hasattr(unmatched, "files") else (unmatched if isinstance(unmatched, (list, tuple, set)) else [])
-        for f in u_files:
-            f_orig = (f.metadata.get("title") or "").lower()
-            f_clean = _clean_title_for_query(f_orig).strip().lower()
-            if f.metadata == metadata or f_clean == target_title or target_title in f_clean or f_clean in target_title:
-                f.metadata["lyrics"] = lyrics_text
-                f.metadata["syncedlyrics"] = lyrics_text
-                f.metadata["unsyncedlyrics"] = lyrics_text
-                if hasattr(f, "mark_as_changed"):
-                    try:
-                        f.mark_as_changed()
-                    except Exception:
-                        pass
-                f.pending_changes = True
+                        elif hasattr(f, "pending_changes"):
+                            f.pending_changes = True
 
     _update_picard_ui(album)
     preview_lines = "\n".join(lyrics_text.splitlines()[:5])
