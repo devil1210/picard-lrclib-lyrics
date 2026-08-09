@@ -26,7 +26,10 @@ def _get_option(key, default=None):
     global _api
     if _api and hasattr(_api, "plugin_config"):
         try:
-            val = _api.plugin_config.get(key)
+            if hasattr(_api.plugin_config, "get"):
+                val = _api.plugin_config.get(key)
+            else:
+                val = _api.plugin_config[key]
             if val is not None:
                 return val
         except Exception:
@@ -999,6 +1002,21 @@ class LrclibLyricsOptions(OptionsPage):
         self.btn_down.clicked.connect(self._move_down)
         self.cb_karaoke.toggled.connect(self._on_karaoke_toggled)
 
+        # Populate default list items on init as initial fallback
+        default_providers = [
+            ("musixmatch_richsync", "Musixmatch RichSync (Word-Level Karaoke)", False),
+            ("youtube_captions", "YouTube Captions (Line-Level TimedText)", True),
+            ("lrclib_synced", "LRCLib (Line-Level Synced LRC)", True),
+            ("musixmatch_subtitle", "Musixmatch Subtitles (Line-Level Sync)", True),
+            ("lrclib_plain", "LRCLib / NetEase (Unsynced Plain Text)", True),
+        ]
+        from PyQt6 import QtCore
+        for key, label, enabled in default_providers:
+            item = QtWidgets.QListWidgetItem(label, self.list_providers)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+            item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(QtCore.Qt.CheckState.Checked if enabled else QtCore.Qt.CheckState.Unchecked)
+
         # Main Layout
         main_vbox = QtWidgets.QVBoxLayout(self)
         main_vbox.addWidget(gb_embedded)
@@ -1029,13 +1047,13 @@ class LrclibLyricsOptions(OptionsPage):
 
     def load(self):
         from PyQt6 import QtCore, QtWidgets
-        self.cb_unsynced.setChecked(bool(self.api.plugin_config.get(ADD_UNSYNCED_LYRICS, True)))
-        self.cb_synced.setChecked(bool(self.api.plugin_config.get(ADD_SYNCED_LYRICS, True)))
-        self.cb_karaoke.setChecked(bool(self.api.plugin_config.get(ENABLE_KARAOKE_WORD_SYNC, False)))
-        self.cb_never_replace.setChecked(bool(self.api.plugin_config.get(NEVER_REPLACE_LYRICS, False)))
-        self.cb_export_lrc.setChecked(bool(self.api.plugin_config.get(EXPORT_LRC, True)))
-        self.cb_sidecar.setChecked(bool(self.api.plugin_config.get(LRC_AS_SIDECAR, True)))
-        self.cb_never_replace_lrc.setChecked(bool(self.api.plugin_config.get(NEVER_REPLACE_LRC, False)))
+        self.cb_unsynced.setChecked(bool(_get_option(ADD_UNSYNCED_LYRICS, True)))
+        self.cb_synced.setChecked(bool(_get_option(ADD_SYNCED_LYRICS, True)))
+        self.cb_karaoke.setChecked(bool(_get_option(ENABLE_KARAOKE_WORD_SYNC, False)))
+        self.cb_never_replace.setChecked(bool(_get_option(NEVER_REPLACE_LYRICS, False)))
+        self.cb_export_lrc.setChecked(bool(_get_option(EXPORT_LRC, True)))
+        self.cb_sidecar.setChecked(bool(_get_option(LRC_AS_SIDECAR, True)))
+        self.cb_never_replace_lrc.setChecked(bool(_get_option(NEVER_REPLACE_LRC, False)))
 
         # Load providers list
         self.list_providers.clear()
@@ -1047,7 +1065,7 @@ class LrclibLyricsOptions(OptionsPage):
             ("lrclib_plain", "LRCLib / NetEase (Unsynced Plain Text)", True),
         ]
 
-        saved_provs = self.api.plugin_config.get("provider_priority", None)
+        saved_provs = _get_option("provider_priority", None)
         if saved_provs and isinstance(saved_provs, list):
             prov_map = {key: (label, default_chk) for key, label, default_chk in default_providers}
             items_to_load = []
@@ -1102,6 +1120,7 @@ def enable(api: PluginApi):
             api.plugin_config.register_option(LRC_AS_SIDECAR, True)
             api.plugin_config.register_option(LRC_FILENAME, "%filename%")
             api.plugin_config.register_option(NEVER_REPLACE_LRC, False)
+            api.plugin_config.register_option("provider_priority", None)
         except Exception:
             pass
     api.register_file_post_addition_to_track_processor(get_lyrics)
