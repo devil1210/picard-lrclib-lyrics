@@ -952,34 +952,125 @@ class LrclibLyricsOptions(OptionsPage):
         super().__init__(parent)
         from PyQt6 import QtWidgets
 
-        self.cb_unsynced = QtWidgets.QCheckBox("Download and embed unsynced lyrics", self)
-        self.cb_synced = QtWidgets.QCheckBox("Download and embed synced lyrics (Line-Level LRC)", self)
-        self.cb_karaoke = QtWidgets.QCheckBox("Enable Musixmatch Word-Level Karaoke Sync (<mm:ss.xx>)", self)
-        self.cb_never_replace = QtWidgets.QCheckBox("Never replace any embedded lyrics if already present", self)
-        self.cb_export_lrc = QtWidgets.QCheckBox("Export lyrics to .lrc file when saving (priority to synced Karaoke lyrics)", self)
-        self.cb_sidecar = QtWidgets.QCheckBox("Save the LRC file as a sidecar file to the audio file (for Navidrome & Feishin)", self)
-        self.cb_never_replace_lrc = QtWidgets.QCheckBox("Never replace lrc files if already present", self)
+        # 1. Embedded Lyrics Options GroupBox
+        gb_embedded = QtWidgets.QGroupBox("Embedded Lyrics Options", self)
+        vbox_emb = QtWidgets.QVBoxLayout(gb_embedded)
 
-        vbox = QtWidgets.QVBoxLayout(self)
-        vbox.addWidget(self.cb_unsynced)
-        vbox.addWidget(self.cb_synced)
-        vbox.addWidget(self.cb_karaoke)
-        vbox.addWidget(self.cb_never_replace)
-        vbox.addWidget(self.cb_export_lrc)
-        vbox.addWidget(self.cb_sidecar)
-        vbox.addWidget(self.cb_never_replace_lrc)
-        vbox.addStretch()
+        self.cb_unsynced = QtWidgets.QCheckBox("Download and embed unsynced lyrics", gb_embedded)
+        self.cb_synced = QtWidgets.QCheckBox("Download and embed synced lyrics (Line-Level LRC)", gb_embedded)
+        self.cb_karaoke = QtWidgets.QCheckBox("Enable Musixmatch Word-Level Karaoke Sync (<mm:ss.xx>)", gb_embedded)
+        self.cb_never_replace = QtWidgets.QCheckBox("Never replace any embedded lyrics if already present", gb_embedded)
+
+        vbox_emb.addWidget(self.cb_unsynced)
+        vbox_emb.addWidget(self.cb_synced)
+        vbox_emb.addWidget(self.cb_karaoke)
+        vbox_emb.addWidget(self.cb_never_replace)
+
+        # 2. LRC File Options GroupBox
+        gb_lrc = QtWidgets.QGroupBox("Lrc Files Options", self)
+        vbox_lrc = QtWidgets.QVBoxLayout(gb_lrc)
+
+        self.cb_export_lrc = QtWidgets.QCheckBox("Export lyrics to .lrc file when saving", gb_lrc)
+        self.cb_sidecar = QtWidgets.QCheckBox("Save the LRC file as a sidecar file to the audio file (for Navidrome & Feishin)", gb_lrc)
+        self.cb_never_replace_lrc = QtWidgets.QCheckBox("Never replace lrc files if already present", gb_lrc)
+
+        vbox_lrc.addWidget(self.cb_export_lrc)
+        vbox_lrc.addWidget(self.cb_sidecar)
+        vbox_lrc.addWidget(self.cb_never_replace_lrc)
+
+        # 3. Provider Priority & Pipeline Reordering Box
+        gb_providers = QtWidgets.QGroupBox("Provider Pipeline Priority & Activation", self)
+        hbox_prov = QtWidgets.QHBoxLayout(gb_providers)
+
+        self.list_providers = QtWidgets.QListWidget(gb_providers)
+        self.list_providers.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.InternalMove)
+
+        vbox_btn = QtWidgets.QVBoxLayout()
+        self.btn_up = QtWidgets.QPushButton("▲ Move Up", gb_providers)
+        self.btn_down = QtWidgets.QPushButton("▼ Move Down", gb_providers)
+        vbox_btn.addWidget(self.btn_up)
+        vbox_btn.addWidget(self.btn_down)
+        vbox_btn.addStretch()
+
+        hbox_prov.addWidget(self.list_providers)
+        hbox_prov.addLayout(vbox_btn)
+
+        self.btn_up.clicked.connect(self._move_up)
+        self.btn_down.clicked.connect(self._move_down)
+        self.cb_karaoke.toggled.connect(self._on_karaoke_toggled)
+
+        # Main Layout
+        main_vbox = QtWidgets.QVBoxLayout(self)
+        main_vbox.addWidget(gb_embedded)
+        main_vbox.addWidget(gb_lrc)
+        main_vbox.addWidget(gb_providers)
+        main_vbox.addStretch()
+
+    def _move_up(self):
+        row = self.list_providers.currentRow()
+        if row > 0:
+            item = self.list_providers.takeItem(row)
+            self.list_providers.insertItem(row - 1, item)
+            self.list_providers.setCurrentRow(row - 1)
+
+    def _move_down(self):
+        row = self.list_providers.currentRow()
+        if row < self.list_providers.count() - 1 and row >= 0:
+            item = self.list_providers.takeItem(row)
+            self.list_providers.insertItem(row + 1, item)
+            self.list_providers.setCurrentRow(row + 1)
+
+    def _on_karaoke_toggled(self, checked):
+        from PyQt6 import QtCore
+        for i in range(self.list_providers.count()):
+            item = self.list_providers.item(i)
+            if item.data(QtCore.Qt.ItemDataRole.UserRole) == "musixmatch_richsync":
+                item.setCheckState(QtCore.Qt.CheckState.Checked if checked else QtCore.Qt.CheckState.Unchecked)
 
     def load(self):
-        self.cb_unsynced.setChecked(bool(self.api.plugin_config[ADD_UNSYNCED_LYRICS]))
-        self.cb_synced.setChecked(bool(self.api.plugin_config[ADD_SYNCED_LYRICS]))
-        self.cb_karaoke.setChecked(bool(self.api.plugin_config[ENABLE_KARAOKE_WORD_SYNC]))
-        self.cb_never_replace.setChecked(bool(self.api.plugin_config[NEVER_REPLACE_LYRICS]))
-        self.cb_export_lrc.setChecked(bool(self.api.plugin_config[EXPORT_LRC]))
-        self.cb_sidecar.setChecked(bool(self.api.plugin_config[LRC_AS_SIDECAR]))
-        self.cb_never_replace_lrc.setChecked(bool(self.api.plugin_config[NEVER_REPLACE_LRC]))
+        from PyQt6 import QtCore, QtWidgets
+        self.cb_unsynced.setChecked(bool(self.api.plugin_config.get(ADD_UNSYNCED_LYRICS, True)))
+        self.cb_synced.setChecked(bool(self.api.plugin_config.get(ADD_SYNCED_LYRICS, True)))
+        self.cb_karaoke.setChecked(bool(self.api.plugin_config.get(ENABLE_KARAOKE_WORD_SYNC, False)))
+        self.cb_never_replace.setChecked(bool(self.api.plugin_config.get(NEVER_REPLACE_LYRICS, False)))
+        self.cb_export_lrc.setChecked(bool(self.api.plugin_config.get(EXPORT_LRC, True)))
+        self.cb_sidecar.setChecked(bool(self.api.plugin_config.get(LRC_AS_SIDECAR, True)))
+        self.cb_never_replace_lrc.setChecked(bool(self.api.plugin_config.get(NEVER_REPLACE_LRC, False)))
+
+        # Load providers list
+        self.list_providers.clear()
+        default_providers = [
+            ("musixmatch_richsync", "Musixmatch RichSync (Word-Level Karaoke)", False),
+            ("youtube_captions", "YouTube Captions (Line-Level TimedText)", True),
+            ("lrclib_synced", "LRCLib (Line-Level Synced LRC)", True),
+            ("musixmatch_subtitle", "Musixmatch Subtitles (Line-Level Sync)", True),
+            ("lrclib_plain", "LRCLib / NetEase (Unsynced Plain Text)", True),
+        ]
+
+        saved_provs = self.api.plugin_config.get("provider_priority", None)
+        if saved_provs and isinstance(saved_provs, list):
+            prov_map = {key: (label, default_chk) for key, label, default_chk in default_providers}
+            items_to_load = []
+            for item_data in saved_provs:
+                if isinstance(item_data, dict):
+                    pkey = item_data.get("key")
+                    pchk = item_data.get("enabled", False)
+                    if pkey in prov_map:
+                        items_to_load.append((pkey, prov_map[pkey][0], pchk))
+            for key, label, default_chk in default_providers:
+                if not any(k == key for k, _, _ in items_to_load):
+                    items_to_load.append((key, label, default_chk))
+        else:
+            items_to_load = default_providers
+
+        for key, label, enabled in items_to_load:
+            item = QtWidgets.QListWidgetItem(label, self.list_providers)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+            item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(QtCore.Qt.CheckState.Checked if enabled else QtCore.Qt.CheckState.Unchecked)
 
     def save(self):
+        from PyQt6 import QtCore
         self.api.plugin_config[ADD_UNSYNCED_LYRICS] = self.cb_unsynced.isChecked()
         self.api.plugin_config[ADD_SYNCED_LYRICS] = self.cb_synced.isChecked()
         self.api.plugin_config[ENABLE_KARAOKE_WORD_SYNC] = self.cb_karaoke.isChecked()
@@ -987,6 +1078,15 @@ class LrclibLyricsOptions(OptionsPage):
         self.api.plugin_config[EXPORT_LRC] = self.cb_export_lrc.isChecked()
         self.api.plugin_config[LRC_AS_SIDECAR] = self.cb_sidecar.isChecked()
         self.api.plugin_config[NEVER_REPLACE_LRC] = self.cb_never_replace_lrc.isChecked()
+
+        saved_provs = []
+        for i in range(self.list_providers.count()):
+            item = self.list_providers.item(i)
+            key = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            enabled = (item.checkState() == QtCore.Qt.CheckState.Checked)
+            saved_provs.append({"key": key, "enabled": enabled})
+
+        self.api.plugin_config["provider_priority"] = saved_provs
 
 
 def enable(api: PluginApi):
